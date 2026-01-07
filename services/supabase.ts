@@ -2,9 +2,18 @@ import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from './gemini'; 
 
 // Environment Variables
-// Using provided credentials as fallbacks to fix connection errors
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://dasfdedcymvskruytqxr.supabase.co';
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhc2ZkZWRjeW12c2tydXl0cXhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5MzYxODIsImV4cCI6MjA3OTUxMjE4Mn0.8ZRtNH419n-Ut6EhZtrJDvdtiN84wHsj3aMxxMVmXTg';
+// Fix for Vercel/Vite: Check import.meta.env first
+const viteEnv = (import.meta as any).env;
+
+const SUPABASE_URL = 
+  viteEnv?.VITE_SUPABASE_URL || 
+  process.env.VITE_SUPABASE_URL || 
+  'https://dasfdedcymvskruytqxr.supabase.co';
+
+const SUPABASE_ANON_KEY = 
+  viteEnv?.VITE_SUPABASE_ANON_KEY || 
+  process.env.VITE_SUPABASE_ANON_KEY || 
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhc2ZkZWRjeW12c2tydXl0cXhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5MzYxODIsImV4cCI6MjA3OTUxMjE4Mn0.8ZRtNH419n-Ut6EhZtrJDvdtiN84wHsj3aMxxMVmXTg';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("Supabase credentials missing. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");

@@ -4,11 +4,18 @@ import { GoogleGenAI } from "@google/genai";
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
-  // Check for VITE_ prefixed key first (standard for Vite/Vercel), then fallback to standard API_KEY
-  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY;
+  // CRITICAL FIX FOR VERCEL/VITE:
+  // Vite uses import.meta.env, not process.env. We check both to be safe.
+  // We use (import.meta as any) to avoid TypeScript errors if types aren't strictly defined.
+  const viteEnv = (import.meta as any).env;
+  
+  const apiKey = 
+    viteEnv?.VITE_API_KEY || 
+    process.env.VITE_API_KEY || 
+    process.env.API_KEY;
   
   if (!apiKey) {
-    console.error("API Key missing. Please set VITE_API_KEY in your environment.");
+    console.error("API Key missing. Please set VITE_API_KEY in your Vercel Environment Variables.");
   }
 
   if (!aiClient) {
