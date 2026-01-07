@@ -1,0 +1,5 @@
+{
+  "name": "EchoMind Knowledge Base",
+  "description": "A minimalist knowledge base and chat application using RAG, deep thinking AI, and PDF analysis.",
+  "requestFramePermissions": []
+}
