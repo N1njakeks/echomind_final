@@ -4,9 +4,15 @@ import { GoogleGenAI } from "@google/genai";
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
-  // The API key must be obtained exclusively from the environment variable process.env.API_KEY
+  // Check for VITE_ prefixed key first (standard for Vite/Vercel), then fallback to standard API_KEY
+  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY;
+  
+  if (!apiKey) {
+    console.error("API Key missing. Please set VITE_API_KEY in your environment.");
+  }
+
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    aiClient = new GoogleGenAI({ apiKey: apiKey || '' });
   }
   return aiClient;
 };
@@ -109,6 +115,7 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 
 /**
  * Generates an answer using either Standard (Flash) or Reflective (Pro) mode
+ * Updated to use gemini-2.5-flash-preview as requested.
  */
 export const generateAnswer = async (
   context: string, 
@@ -128,13 +135,14 @@ export const generateAnswer = async (
 
   try {
     if (mode === 'reflective') {
-      // SMART MODE: gemini-3-pro-preview for better instruction following
+      // SMART MODE: Using gemini-2.5-flash-preview with thinking
       const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-2.5-flash-preview',
         contents: question,
         config: {
           systemInstruction,
           // Using a small thinking budget to allow for "thoughtful" processing of the reflection arc
+          // Supported on 2.5 Flash (max 24k)
           thinkingConfig: {
             thinkingBudget: 2048, 
           }
@@ -142,9 +150,9 @@ export const generateAnswer = async (
       });
       return response.text || "No response generated.";
     } else {
-      // STANDARD MODE: gemini-3-flash-preview for fast, casual chat
+      // STANDARD MODE: Using gemini-2.5-flash-preview
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.5-flash-preview',
         contents: question,
         config: {
             systemInstruction
