@@ -103,13 +103,13 @@ OPENING LINE (USE ONCE)
 “Hey, I’m glad you’re here. Thinking back on today’s reading, what’s one piece or idea that’s still lingering with you?”`;
 
 /**
- * Generates vector embedding for text using text-embedding-004
+ * Generates vector embedding for text using gemini-embedding-1.0 (Available in user list)
  */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
-  // Using the specific embedding model
+  // Using the user-available embedding model
   const response = await ai.models.embedContent({
-    model: 'text-embedding-004',
+    model: 'gemini-embedding-1.0',
     contents: text
   });
 
@@ -121,8 +121,7 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 /**
- * Generates an answer using either Standard (Flash) or Reflective (Pro) mode
- * Updated to use gemini-2.5-flash-preview as requested.
+ * Generates an answer using either Standard (2.5 Flash) or Reflective (3 Flash) mode
  */
 export const generateAnswer = async (
   context: string, 
@@ -142,14 +141,13 @@ export const generateAnswer = async (
 
   try {
     if (mode === 'reflective') {
-      // SMART MODE: Using gemini-2.5-flash-preview with thinking
+      // SMART MODE: Using gemini-3-flash-preview (Supports Thinking and is in user list as gemini-3-flash)
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview',
+        model: 'gemini-3-flash-preview',
         contents: question,
         config: {
           systemInstruction,
-          // Using a small thinking budget to allow for "thoughtful" processing of the reflection arc
-          // Supported on 2.5 Flash (max 24k)
+          // Thinking Budget for deep reflection (Supported on Gemini 3 series)
           thinkingConfig: {
             thinkingBudget: 2048, 
           }
@@ -157,9 +155,9 @@ export const generateAnswer = async (
       });
       return response.text || "No response generated.";
     } else {
-      // STANDARD MODE: Using gemini-2.5-flash-preview
+      // STANDARD MODE: Using gemini-2.5-flash (Available in user list)
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview',
+        model: 'gemini-2.5-flash',
         contents: question,
         config: {
             systemInstruction
@@ -169,6 +167,6 @@ export const generateAnswer = async (
     }
   } catch (error) {
     console.error("Gemini Generation Error:", error);
-    return "I'm sorry, I encountered an error communicating with the AI model.";
+    return "I'm sorry, I encountered an error communicating with the AI model. Please check your API Key and Model availability.";
   }
 };
