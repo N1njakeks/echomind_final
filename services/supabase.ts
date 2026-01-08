@@ -133,18 +133,43 @@ export const createChatSession = async (title: string, sourceIds: string[]) => {
 export const fetchChatSessions = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
-    const { data } = await supabase.from('chat_sessions').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+    const { data } = await supabase
+        .from('chat_sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
     return data || [];
+};
+
+export const fetchChatMessages = async (sessionId: string) => {
+    const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
+
+    if (error) return [];
+    
+    return data.map((msg: any) => ({
+        id: msg.id,
+        role: msg.role,
+        text: msg.text,
+        timestamp: new Date(msg.created_at).getTime(),
+        // Map the database column 'is_thinking' to our frontend property 'isThinking'
+        isThinking: msg.is_thinking 
+    }));
 };
 
 export const saveChatMessage = async (sessionId: string, message: any) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    
     await supabase.from('chat_messages').insert([{
         session_id: sessionId,
         user_id: user.id,
         role: message.role,
         text: message.text,
-        is_thinking: message.isThinking || false
+        // Save whether this was a smart/reflective response
+        is_thinking: message.isThinking || false 
     }]);
 };

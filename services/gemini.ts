@@ -84,7 +84,8 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 /**
- * Generates an answer using either Standard (2.5 Flash) or Reflective (3 Flash) mode
+ * Generates an answer using either Standard or Reflective prompts
+ * NOW: Uses the SAME model (gemini-3-flash-preview) for both to strictly compare prompting strategies.
  */
 export const generateAnswer = async (
   context: string, 
@@ -97,7 +98,6 @@ export const generateAnswer = async (
   const baseSystemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
   
   // Construct the final System Instruction
-  // IMPORTANT: We place the Context AT THE TOP so it establishes the "World Truth" before the persona instructions.
   let finalSystemInstruction = baseSystemInstruction;
 
   if (context) {
@@ -105,31 +105,20 @@ export const generateAnswer = async (
   }
 
   try {
-    if (mode === 'reflective') {
-      // SMART MODE: Using gemini-3-flash-preview
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: question,
-        config: {
-          systemInstruction: finalSystemInstruction,
-          // Thinking Budget for deep reflection
-          thinkingConfig: {
-            thinkingBudget: 2048, 
-          }
-        }
-      });
-      return response.text || "No response generated.";
-    } else {
-      // STANDARD MODE: Using gemini-2.5-flash
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: question,
-        config: {
-            systemInstruction: finalSystemInstruction
-        }
-      });
-      return response.text || "No response generated.";
-    }
+    // UNIFIED CALL: We use the same model and config for both modes to isolate the prompt as the variable.
+    // 'gemini-3-flash-preview' is used for both. 
+    // thinkingConfig is removed to ensure the "Smart" behavior comes purely from the System Prompt.
+    
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: question,
+      config: {
+        systemInstruction: finalSystemInstruction
+      }
+    });
+
+    return response.text || "No response generated.";
+
   } catch (error) {
     console.error("Gemini Generation Error:", error);
     return "I'm sorry, I encountered an error communicating with the AI model. Please check your API Key and Model availability.";

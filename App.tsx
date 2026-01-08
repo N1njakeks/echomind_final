@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages } from './services/supabase';
 import { generateAnswer, generateEmbedding } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
-import { SourceFile, ChatMessage } from './types';
+import { SourceFile, ChatMessage, ChatSession } from './types';
 import { 
   LogOut, 
   FileText, 
@@ -15,7 +15,9 @@ import {
   Square,
   Upload,
   X,
-  MessageCircle
+  MessageCircle,
+  Plus,
+  History
 } from 'lucide-react';
 
 // --- Auth Component ---
@@ -100,15 +102,20 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
 // --- Main App Component ---
 export default function App() {
   const [session, setSession] = useState<any>(null);
+  
+  // Data State
   const [documents, setDocuments] = useState<SourceFile[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  
+  // UI State
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'docs' | 'chats'>('docs');
   
-  // Replaced useThinking with chatMode
+  // Chat Configuration
   const [chatMode, setChatMode] = useState<'standard' | 'reflective'>('standard');
-  
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
 
@@ -128,8 +135,12 @@ export default function App() {
   }, []);
 
   const loadData = async () => {
-    const docs = await fetchUserDocuments();
+    const [docs, sessions] = await Promise.all([
+      fetchUserDocuments(),
+      fetchChatSessions()
+    ]);
     setDocuments(docs);
+    setChatSessions(sessions);
   };
 
   const handleLogout = async () => {
@@ -137,6 +148,31 @@ export default function App() {
     setSession(null);
     setDocuments([]);
     setMessages([]);
+    setChatSessions([]);
+    setCurrentSessionId(null);
+  };
+
+  const handleNewChat = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+    setChatMode('standard');
+  };
+
+  const handleSelectSession = async (sessionId: string) => {
+    setLoading(true);
+    try {
+      const msgs = await fetchChatMessages(sessionId);
+      setMessages(msgs);
+      setCurrentSessionId(sessionId);
+      
+      // Determine mode based on last message style or keep standard
+      // If the last model message was "thinking", we could switch mode, 
+      // but purely visual indication is usually enough.
+    } catch (e) {
+      console.error("Failed to load session", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,24 +230,23 @@ export default function App() {
       
       if (!sessionId) {
         const sessionData = await createChatSession(
-          userMsg.text.slice(0, 30) + "...", 
+          userMsg.text.slice(0, 30) + (userMsg.text.length > 30 ? "..." : ""), 
           selectedDocs.map(d => d.id)
         );
         sessionId = sessionData.id;
         setCurrentSessionId(sessionId);
+        // Refresh session list to show new chat in sidebar
+        fetchChatSessions().then(setChatSessions);
       }
 
       await saveChatMessage(sessionId!, userMsg);
 
-      // 2. RAG Logic: If docs are selected, use them as context
+      // 2. RAG Logic
       let context = "";
       
-      // If docs are specifically selected (Checkbox), use strictly those.
-      // If NO docs are selected, try to find relevant ones via vector search on the whole DB.
       if (selectedDocs.length > 0) {
         context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
       } else {
-        // Semantic Search fallback
         const embedding = await generateEmbedding(userMsg.text);
         const similarDocs = await findSimilarDocuments(embedding);
         if (similarDocs && similarDocs.length > 0) {
@@ -219,7 +254,7 @@ export default function App() {
         }
       }
 
-      // 3. Generate Answer using the selected mode (standard or reflective)
+      // 3. Generate Answer
       const aiResponseText = await generateAnswer(context, userMsg.text, chatMode);
 
       const aiMsg: ChatMessage = {
@@ -227,6 +262,7 @@ export default function App() {
         role: 'model',
         text: aiResponseText,
         timestamp: Date.now(),
+        // IMPORTANT: Set isThinking based on mode. This is saved to DB via saveChatMessage
         isThinking: chatMode === 'reflective'
       };
 
@@ -250,76 +286,144 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans">
-      {/* Sidebar - Knowledge Base */}
+      {/* Sidebar - Knowledge Base & History */}
       <div className="w-80 bg-white border-r border-slate-200 flex flex-col shadow-sm z-10">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h2 className="font-bold text-lg flex items-center text-slate-700">
             <BrainCircuit className="w-5 h-5 mr-2 text-indigo-600" />
-            Knowledge Base
+            EchoMind
           </h2>
           <button onClick={handleLogout} className="text-slate-400 hover:text-slate-600 transition-colors">
             <LogOut className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-4">
-          <label className="flex items-center justify-center w-full px-4 py-3 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100 border-dashed cursor-pointer hover:bg-indigo-100 transition-colors">
-            {uploading ? (
-              <Loader2 className="w-5 h-5 animate-spin mr-2" />
-            ) : (
-              <Upload className="w-5 h-5 mr-2" />
-            )}
-            <span className="font-medium text-sm">{uploading ? 'Processing...' : 'Upload PDF / Text'}</span>
-            <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
-          </label>
+        {/* Sidebar Tabs */}
+        <div className="flex border-b border-slate-100">
+          <button 
+            onClick={() => setSidebarTab('docs')}
+            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center transition-colors ${sidebarTab === 'docs' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+          >
+            <FileText className="w-4 h-4 mr-2" />
+            Documents
+          </button>
+          <button 
+            onClick={() => setSidebarTab('chats')}
+            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center transition-colors ${sidebarTab === 'chats' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+          >
+            <History className="w-4 h-4 mr-2" />
+            History
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2">
-          {documents.length === 0 && (
-            <div className="text-center p-8 text-slate-400 text-sm">
-              No documents yet.<br/>Upload knowledge to begin.
+        {/* Tab Content: Documents */}
+        {sidebarTab === 'docs' && (
+          <>
+            <div className="p-4">
+              <label className="flex items-center justify-center w-full px-4 py-3 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100 border-dashed cursor-pointer hover:bg-indigo-100 transition-colors">
+                {uploading ? (
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                ) : (
+                  <Upload className="w-5 h-5 mr-2" />
+                )}
+                <span className="font-medium text-sm">{uploading ? 'Processing...' : 'Upload PDF / Text'}</span>
+                <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
+              </label>
             </div>
-          )}
-          {documents.map(doc => (
-            <div 
-              key={doc.id} 
-              className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
-                doc.isSelected ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'
-              } border`}
-              onClick={() => setViewingDoc(doc)}
-            >
-              <button 
-                className="mr-3 text-slate-400 group-hover:text-indigo-600 p-1 rounded hover:bg-slate-100"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleDocumentSelection(doc.id);
-                }}
-              >
-                {doc.isSelected ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5" />}
-              </button>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center mb-0.5">
-                  <FileText className="w-3 h-3 mr-1.5 text-slate-400" />
-                  <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>
-                    {doc.title}
-                  </p>
+
+            <div className="flex-1 overflow-y-auto px-2">
+              {documents.length === 0 && (
+                <div className="text-center p-8 text-slate-400 text-sm">
+                  No documents yet.<br/>Upload knowledge to begin.
                 </div>
-                <p className="text-xs text-slate-400 truncate pl-5">
-                  {new Date(doc.createdAt).toLocaleDateString()}
-                </p>
-              </div>
+              )}
+              {documents.map(doc => (
+                <div 
+                  key={doc.id} 
+                  className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
+                    doc.isSelected ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'
+                  } border`}
+                  onClick={() => setViewingDoc(doc)}
+                >
+                  <button 
+                    className="mr-3 text-slate-400 group-hover:text-indigo-600 p-1 rounded hover:bg-slate-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleDocumentSelection(doc.id);
+                    }}
+                  >
+                    {doc.isSelected ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5" />}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center mb-0.5">
+                      <FileText className="w-3 h-3 mr-1.5 text-slate-400" />
+                      <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>
+                        {doc.title}
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-400 truncate pl-5">
+                      {new Date(doc.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
+
+        {/* Tab Content: Chats */}
+        {sidebarTab === 'chats' && (
+          <>
+            <div className="p-4">
+              <button 
+                onClick={handleNewChat}
+                className="flex items-center justify-center w-full px-4 py-3 bg-white text-slate-700 rounded-lg border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-colors shadow-sm"
+              >
+                <Plus className="w-5 h-5 mr-2 text-indigo-600" />
+                <span className="font-medium text-sm">New Conversation</span>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2">
+              {chatSessions.length === 0 && (
+                <div className="text-center p-8 text-slate-400 text-sm">
+                  No history yet.
+                </div>
+              )}
+              {chatSessions.map(session => (
+                <div 
+                  key={session.id} 
+                  onClick={() => handleSelectSession(session.id)}
+                  className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer border ${
+                    currentSessionId === session.id 
+                      ? 'bg-indigo-50 border-indigo-100' 
+                      : 'hover:bg-slate-50 border-transparent border-b-slate-50'
+                  }`}
+                >
+                  <MessageSquare className={`w-4 h-4 mr-3 flex-shrink-0 ${currentSessionId === session.id ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-indigo-900' : 'text-slate-700'}`}>
+                      {session.title || "Untitled Chat"}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {new Date(session.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col relative">
         <header className="h-16 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center px-6 justify-between sticky top-0 z-10">
           <div>
-            <h1 className="font-bold text-slate-800 text-lg">Chat</h1>
+            <h1 className="font-bold text-slate-800 text-lg">
+              {currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Chat") : "New Chat"}
+            </h1>
             <p className="text-xs text-slate-500">
-              {chatMode === 'reflective' ? "Reflective Coach (Smart)" : "Standard Chat"}
+              {chatMode === 'reflective' ? "Reflective Coach (Smart)" : "Standard Assistant"}
             </p>
           </div>
           
@@ -359,6 +463,7 @@ export default function App() {
                     : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'
                 }`}
               >
+                {/* Visual indicator for Reflective/Thinking messages */}
                 {msg.isThinking && msg.role === 'model' && (
                   <div className="mb-2 pb-2 border-b border-slate-100 text-xs text-indigo-500 font-medium flex items-center">
                     <Sparkles className="w-3 h-3 mr-1" />
