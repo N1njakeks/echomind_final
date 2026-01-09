@@ -4,9 +4,6 @@ import { GoogleGenAI } from "@google/genai";
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
-  // CRITICAL FIX FOR VERCEL/VITE:
-  // Vite uses import.meta.env, not process.env. We check both to be safe.
-  // We use (import.meta as any) to avoid TypeScript errors if types aren't strictly defined.
   const viteEnv = (import.meta as any).env;
   
   const apiKey = 
@@ -38,7 +35,7 @@ const SMART_PROMPT = `You are Echomind, a reflective companion that helps learne
 
 CONTEXT & GROUNDING
 You have access to the specific text the user is reading ("Reference Material").
-You MUST use this material to ground your questions. Don't just ask generic questions; reference specific concepts, quotes, or arguments from the text to trigger the user's memory.
+You MUST use this material to ground your questions. Reference specific concepts, quotes, or arguments from the text to trigger the user's memory.
 
 CORE OBJECTIVE
 Guide the user through a complete reflective arc that:
@@ -50,14 +47,9 @@ Guide the user through a complete reflective arc that:
 - shapes future intent
 
 CONVERSATION SHAPE
-Aim for ~10 conversational turns in total
+Aim for ~10 conversational turns in total. 
+Monitor the chat history to see which stage of the reflection you are in.
 Ask one main question per turn.
-
-REFLECTION GUARANTEES
-Across the conversation, make sure you:
-- Anchor reflection in a specific moment or piece the user encountered in the Reference Material.
-- Invite emotional and cognitive reactions.
-- Help the user articulate what they learned.
 
 STYLE GUIDELINES
 - Warm, curious, unhurried
@@ -66,11 +58,10 @@ STYLE GUIDELINES
 - 3–5 sentences per response max`;
 
 /**
- * Generates vector embedding for text using gemini-embedding-1.0 (Available in user list)
+ * Generates vector embedding for text
  */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
-  // Using the user-available embedding model
   const response = await ai.models.embedContent({
     model: 'gemini-embedding-1.0',
     contents: text
@@ -84,43 +75,40 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 /**
- * Generates an answer using either Standard or Reflective prompts
- * NOW: Uses the SAME model (gemini-3-flash-preview) for both to strictly compare prompting strategies.
+ * Generates an answer using the full chat history for stateful conversation
  */
 export const generateAnswer = async (
   context: string, 
-  question: string, 
+  history: { role: 'user' | 'model', text: string }[], 
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
   const ai = getClient();
   
-  // Choose System Prompt based on mode
   const baseSystemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
   
-  // Construct the final System Instruction
   let finalSystemInstruction = baseSystemInstruction;
-
   if (context) {
-    finalSystemInstruction = `=== REFERENCE MATERIAL (SOURCE OF TRUTH) ===\nThe following text is the content the user is strictly referring to. You possess this knowledge:\n\n${context}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemInstruction}`;
+    finalSystemInstruction = `=== REFERENCE MATERIAL (SOURCE OF TRUTH) ===\n${context}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemInstruction}`;
   }
 
+  // Format history for Gemini API
+  const contents = history.map(msg => ({
+    role: msg.role === 'user' ? 'user' : 'model',
+    parts: [{ text: msg.text }]
+  }));
+
   try {
-    // UNIFIED CALL: We use the same model and config for both modes to isolate the prompt as the variable.
-    // 'gemini-3-flash-preview' is used for both. 
-    // thinkingConfig is removed to ensure the "Smart" behavior comes purely from the System Prompt.
-    
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: question,
+      contents: contents,
       config: {
         systemInstruction: finalSystemInstruction
       }
     });
 
     return response.text || "No response generated.";
-
   } catch (error) {
     console.error("Gemini Generation Error:", error);
-    return "I'm sorry, I encountered an error communicating with the AI model. Please check your API Key and Model availability.";
+    return "I encountered an error. Please check your connection.";
   }
 };
