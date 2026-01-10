@@ -22,7 +22,8 @@ import {
   ChevronLeft,
   PieChart as PieChartIcon,
   Sparkles,
-  Settings
+  Settings,
+  ArrowRight
 } from 'lucide-react';
 
 // --- Simple Pie Chart Component ---
@@ -269,6 +270,24 @@ export default function App() {
     ));
   };
 
+  const selectAllAndAnalyze = async () => {
+    // Select all docs in state
+    const updatedDocs = documents.map(d => ({ ...d, isSelected: true }));
+    setDocuments(updatedDocs);
+    
+    // Trigger analysis immediately
+    setIsAnalyzing(true);
+    setShowOverview(true);
+    try {
+      const summary = await generateTopicSummary(updatedDocs);
+      setOverviewData(summary);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const startAnalysis = async () => {
     const selected = documents.filter(d => d.isSelected);
     if (selected.length === 0) return;
@@ -361,6 +380,7 @@ export default function App() {
   if (!session) return <AuthScreen onLogin={() => {}} />;
 
   const selectedPages = documents.filter(d => d.isSelected).reduce((sum, d) => sum + (d.pageCount || 1), 0);
+  const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
 
   return (
     <div className="flex h-full bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
@@ -425,31 +445,41 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-2 pb-4">
-              {documents.map(doc => (
-                <div 
-                  key={doc.id} 
-                  className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
-                    doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
-                  } border`}
-                  onClick={() => { setViewingDoc(doc); if(window.innerWidth < 768) setIsSidebarOpen(false); }}
-                >
-                  <button 
-                    className="mr-3 text-slate-400"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleDocumentSelection(doc.id);
-                    }}
-                  >
-                    {doc.isSelected ? <CheckSquare className="w-5 h-5 text-slate-800" /> : <Square className="w-5 h-5" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
-                      {doc.title}
-                    </p>
-                    {doc.pageCount && <span className="text-[10px] text-slate-400">{doc.pageCount} pages</span>}
-                  </div>
+              {documents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 text-slate-400 px-4 text-center">
+                  <FileText className="w-8 h-8 mb-2 opacity-50" />
+                  <span className="text-xs">No documents yet. Upload one above.</span>
                 </div>
-              ))}
+              ) : (
+                documents.map(doc => (
+                  <div 
+                    key={doc.id} 
+                    className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
+                      doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
+                    } border`}
+                    onClick={() => { setViewingDoc(doc); if(window.innerWidth < 768) setIsSidebarOpen(false); }}
+                  >
+                    <button 
+                      className="mr-3 text-slate-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleDocumentSelection(doc.id);
+                      }}
+                    >
+                      {doc.isSelected ? <CheckSquare className="w-5 h-5 text-slate-800" /> : <Square className="w-5 h-5" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                        {doc.title}
+                      </p>
+                      {/* Show page count even if undefined (fallback to 1 if we render total logic) */}
+                      <span className="text-[10px] text-slate-400">
+                        {doc.pageCount ? `${doc.pageCount} pages` : 'Document'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
             
             {documents.some(d => d.isSelected) && (
@@ -591,8 +621,30 @@ export default function App() {
             <div className="p-4 md:p-6 space-y-4 md:space-y-6">
               {messages.length === 0 && (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-300 px-6 text-center">
-                  <BrainCircuit className="w-16 h-16 mb-4 opacity-10" />
-                  <p className="text-sm">Ready for input.</p>
+                  {documents.length > 0 ? (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-md mx-auto">
+                        <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-4 mx-auto text-slate-600">
+                           <FileText className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800 mb-2">Knowledge Base Ready</h3>
+                        <p className="text-slate-500 mb-6 text-sm leading-relaxed">
+                          You have <strong>{totalPages} pages</strong> saved across {documents.length} documents. 
+                          Generate a summary to get started.
+                        </p>
+                        <button 
+                          onClick={selectAllAndAnalyze}
+                          className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg font-medium transition-colors flex items-center justify-center"
+                        >
+                          <Sparkles className="w-4 h-4 mr-2" />
+                          Start Analysis
+                        </button>
+                    </div>
+                  ) : (
+                    <>
+                      <BrainCircuit className="w-16 h-16 mb-4 opacity-10" />
+                      <p className="text-sm">Ready for input.</p>
+                    </>
+                  )}
                 </div>
               )}
               

@@ -85,13 +85,25 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
       }
   } catch (e) { console.warn("Embedding failed", e); }
 
+  // First attempt: Try saving with page_count
   const { data, error } = await supabase
     .from('documents')
     .insert([{ user_id: user.id, title, content, type, embedding, is_read: false, page_count: pageCount }])
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    // Fallback: If page_count column is missing in DB (legacy schema), save without it
+    console.warn("Save failed, retrying without metadata...", error.message);
+    const { data: retryData, error: retryError } = await supabase
+      .from('documents')
+      .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
+      .select()
+      .single();
+      
+    if (retryError) throw retryError;
+    return retryData;
+  }
   return data;
 };
 
@@ -99,13 +111,17 @@ export const fetchUserDocuments = async () => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
 
+  // Use select('*') to avoid errors if specific columns (like page_count) are missing in the schema
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, content, type, is_read, created_at, page_count')
+    .select('*')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
-  if (error) return [];
+  if (error) {
+    console.error("Fetch docs error:", error);
+    return [];
+  }
   
   return data.map((doc: any) => ({
     id: doc.id,
@@ -115,7 +131,7 @@ export const fetchUserDocuments = async () => {
     isRead: doc.is_read,
     isSelected: false,
     createdAt: new Date(doc.created_at).getTime(),
-    pageCount: doc.page_count
+    pageCount: doc.page_count // Will be undefined if column missing, which is fine
   }));
 };
 
@@ -137,7 +153,7 @@ export const findSimilarDocuments = async (embedding: number[]) => {
 
     const { data: docs } = await supabase
         .from('documents')
-        .select('*')
+        .select('*') // Changed to * for robustness
         .in('id', ids);
 
     return (docs || []).map((doc: any) => ({
