@@ -20,49 +20,56 @@ import {
   History,
   Menu as MenuIcon,
   ChevronLeft,
-  PieChart as PieChartIcon,
   Sparkles,
   Settings,
-  ArrowRight
+  ArrowRight,
+  BarChart3
 } from 'lucide-react';
 
-// --- Simple Pie Chart Component ---
-const PieChart = ({ data }: { data: { label: string, value: number }[] }) => {
-  let cumulativeValue = 0;
-  const colors = ['#1e293b', '#475569', '#94a3b8', '#cbd5e1', '#e2e8f0'];
+// --- Knowledge Distribution Component (Replaces PieChart) ---
+const KnowledgeDistribution = ({ data }: { data: { label: string, value: number }[] }) => {
+  // Sophisticated monochrome palette
+  const colors = [
+    'bg-slate-800', 
+    'bg-slate-600', 
+    'bg-slate-500', 
+    'bg-slate-400', 
+    'bg-slate-300',
+    'bg-slate-200'
+  ];
 
   return (
-    <div className="flex flex-col md:flex-row items-center justify-center space-y-6 md:space-y-0 md:space-x-12 p-4">
-      <div className="relative w-48 h-48 md:w-56 md:h-56">
-        <svg viewBox="0 0 32 32" className="w-full h-full transform -rotate-90">
-          {data.map((item, index) => {
-            const percentage = item.value;
-            const strokeDasharray = `${percentage} 100`;
-            const strokeDashoffset = -cumulativeValue;
-            cumulativeValue += percentage;
-            return (
-              <circle
-                key={index}
-                cx="16"
-                cy="16"
-                r="16"
-                fill="transparent"
-                stroke={colors[index % colors.length]}
-                strokeWidth="32"
-                strokeDasharray={strokeDasharray}
-                strokeDashoffset={strokeDashoffset}
-                className="transition-all duration-1000 ease-out"
-              />
-            );
-          })}
-        </svg>
+    <div className="w-full max-w-2xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-500">
+      {/* 1. The Stacked Bar */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span>Topic Distribution</span>
+          <span>100%</span>
+        </div>
+        <div className="h-6 w-full flex rounded-lg overflow-hidden ring-1 ring-slate-200 shadow-sm">
+          {data.map((item, index) => (
+            <div 
+              key={index}
+              style={{ width: `${item.value}%` }} 
+              className={`${colors[index % colors.length]} h-full transition-all duration-1000 ease-out`}
+              title={`${item.label}: ${item.value}%`}
+            />
+          ))}
+        </div>
       </div>
-      <div className="space-y-3">
+
+      {/* 2. The Detailed Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {data.map((item, index) => (
-          <div key={index} className="flex items-center space-x-3">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }}></div>
-            <span className="text-sm font-medium text-slate-600">{item.label}</span>
-            <span className="text-xs text-slate-400 font-bold">{item.value}%</span>
+          <div 
+            key={index} 
+            className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-slate-300 hover:shadow-sm transition-all group"
+          >
+            <div className="flex items-center space-x-3">
+              <div className={`w-3 h-3 rounded-full ${colors[index % colors.length]} group-hover:scale-110 transition-transform`} />
+              <span className="font-medium text-slate-700 text-sm truncate max-w-[140px]">{item.label}</span>
+            </div>
+            <span className="text-sm font-bold text-slate-400 group-hover:text-slate-600">{item.value}%</span>
           </div>
         ))}
       </div>
@@ -583,7 +590,7 @@ export default function App() {
                   </div>
                 ) : overviewData ? (
                   <div className="space-y-12">
-                    <PieChart data={overviewData} />
+                    <KnowledgeDistribution data={overviewData} />
                     
                     <div className="pt-8 border-t border-slate-100">
                       <p className="text-center text-slate-600 font-medium mb-6">
