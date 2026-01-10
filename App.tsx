@@ -23,7 +23,8 @@ import {
   Sparkles,
   Settings,
   ArrowRight,
-  BarChart3
+  BarChart3,
+  Layers
 } from 'lucide-react';
 
 // --- Knowledge Distribution Component (Replaces PieChart) ---
@@ -387,6 +388,7 @@ export default function App() {
   if (!session) return <AuthScreen onLogin={() => {}} />;
 
   const selectedPages = documents.filter(d => d.isSelected).reduce((sum, d) => sum + (d.pageCount || 1), 0);
+  const selectedCount = documents.filter(d => d.isSelected).length;
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
 
   return (
@@ -603,7 +605,7 @@ export default function App() {
                           value={inputText}
                           onChange={(e) => setInputText(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                          placeholder="Tell me what to explore..."
+                          placeholder={`Ask about these ${selectedCount} documents...`}
                           className="w-full pl-6 pr-14 py-5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-slate-400 focus:outline-none focus:bg-white transition-all text-sm"
                         />
                         <button 
@@ -619,8 +621,8 @@ export default function App() {
               </div>
 
               <div className="flex items-center space-x-2 text-slate-400 text-sm">
-                <BrainCircuit className="w-4 h-4" />
-                <span>Powered by V2 Synthesis</span>
+                <Layers className="w-4 h-4" />
+                <span>Context: Full content of {selectedCount} documents sent to AI.</span>
               </div>
             </div>
           ) : (
