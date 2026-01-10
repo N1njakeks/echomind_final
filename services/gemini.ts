@@ -76,25 +76,43 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 
 /**
  * Analyzes documents to create a topic distribution for the summary chart.
+ * Uses a deterministic classification approach for robust stats.
  */
 export const generateTopicSummary = async (documents: {title: string, content: string}[]): Promise<{label: string, value: number}[]> => {
   const ai = getClient();
   
-  // Create a combined snippet of documents (first ~2000 chars each)
-  const combinedContext = documents.map(d => `Title: ${d.title}\nSnippet: ${d.content.slice(0, 2000)}`).join('\n\n');
+  // Create a structured list for the LLM to count
+  const docList = documents.map((d, i) => `Doc ${i+1} Title: ${d.title}\nSnippet: ${d.content.slice(0, 500)}...`).join('\n\n');
+
+  const prompt = `
+  You are a data analyst. I have ${documents.length} documents.
+  
+  YOUR TASK:
+  1. Identify 3-6 distinct "Themes" that categorize these documents.
+  2. Assign EACH document to exactly ONE best-fitting Theme.
+  3. Count the number of documents in each Theme.
+  4. Calculate the percentage: (Count / ${documents.length}) * 100.
+  
+  INPUT DOCUMENTS:
+  ${docList}
+  
+  OUTPUT:
+  Return JSON only.
+  `;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Analyze the following document snippets and identify 3-5 major overarching topics or themes. Provide a percentage breakdown of how much each topic represents the total knowledge base. Return only JSON.\n\n${combinedContext}`,
+    contents: prompt,
     config: {
+      temperature: 0, // CRITICAL: Makes the output deterministic/consistent
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.ARRAY,
         items: {
           type: Type.OBJECT,
           properties: {
-            label: { type: Type.STRING, description: "Short topic name (max 2 words)" },
-            value: { type: Type.NUMBER, description: "Percentage value (integer, sum to 100)" }
+            label: { type: Type.STRING, description: "Theme name (max 3 words)" },
+            value: { type: Type.NUMBER, description: "Calculated percentage based on document count" }
           },
           required: ["label", "value"]
         }
@@ -103,7 +121,10 @@ export const generateTopicSummary = async (documents: {title: string, content: s
   });
 
   try {
-    return JSON.parse(response.text || '[]');
+    const data = JSON.parse(response.text || '[]');
+    // Fallback: If AI returns empty or fails, give a generic result
+    if (!data || data.length === 0) return [{ label: "General Content", value: 100 }];
+    return data;
   } catch (e) {
     console.error("Failed to parse topic summary", e);
     return [{ label: "General Knowledge", value: 100 }];
@@ -138,6 +159,7 @@ export const generateAnswer = async (
       model: 'gemini-3-flash-preview',
       contents: contents,
       config: {
+        temperature: 0.7, // Keep chat slightly creative
         systemInstruction: finalSystemInstruction
       }
     });

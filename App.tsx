@@ -39,6 +39,10 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
     'bg-slate-200'
   ];
 
+  // Robustness: Calculate total to normalize percentages visually.
+  // This ensures the bar is always full even if LLM math is slightly off (e.g. sums to 95 or 105).
+  const totalValue = data.reduce((acc, item) => acc + item.value, 0);
+
   return (
     <div className="w-full max-w-2xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-500">
       {/* 1. The Stacked Bar */}
@@ -47,15 +51,19 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
           <span>Topic Distribution</span>
           <span>100%</span>
         </div>
-        <div className="h-6 w-full flex rounded-lg overflow-hidden ring-1 ring-slate-200 shadow-sm">
-          {data.map((item, index) => (
-            <div 
-              key={index}
-              style={{ width: `${item.value}%` }} 
-              className={`${colors[index % colors.length]} h-full transition-all duration-1000 ease-out`}
-              title={`${item.label}: ${item.value}%`}
-            />
-          ))}
+        <div className="h-6 w-full flex rounded-lg overflow-hidden ring-1 ring-slate-200 shadow-sm bg-slate-100">
+          {data.map((item, index) => {
+            // Calculate normalized width
+            const widthPercentage = totalValue > 0 ? (item.value / totalValue) * 100 : 0;
+            return (
+              <div 
+                key={index}
+                style={{ width: `${widthPercentage}%` }} 
+                className={`${colors[index % colors.length]} h-full transition-all duration-1000 ease-out border-r border-white/10 last:border-0`}
+                title={`${item.label}: ${item.value}%`}
+              />
+            );
+          })}
         </div>
       </div>
 
