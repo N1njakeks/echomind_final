@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument } from './services/supabase';
 import { generateAnswer, generateEmbedding, generateTopicSummary } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -24,7 +24,8 @@ import {
   Settings,
   ArrowRight,
   BarChart3,
-  Layers
+  Layers,
+  Trash2
 } from 'lucide-react';
 
 // --- Knowledge Distribution Component (Replaces PieChart) ---
@@ -35,7 +36,7 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
     'bg-slate-600', 
     'bg-slate-500', 
     'bg-slate-400', 
-    'bg-slate-300',
+    'bg-slate-300', 
     'bg-slate-200'
   ];
 
@@ -280,6 +281,20 @@ export default function App() {
     }
   };
 
+  const handleDeleteDocument = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation(); // Prevent opening the document
+    if (!confirm("Are you sure you want to delete this document?")) return;
+
+    try {
+      await deleteDocument(id);
+      setDocuments(prev => prev.filter(d => d.id !== id));
+      // If we were viewing this document, close the viewer
+      if (viewingDoc?.id === id) setViewingDoc(null);
+    } catch (err) {
+      console.error("Failed to delete document", err);
+    }
+  };
+
   const toggleDocumentSelection = (id: string) => {
     setDocuments(prev => prev.map(doc => 
       doc.id === id ? { ...doc, isSelected: !doc.isSelected } : doc
@@ -494,6 +509,14 @@ export default function App() {
                         {doc.pageCount ? `${doc.pageCount} pages` : 'Document'}
                       </span>
                     </div>
+                    {/* Delete button: Only visible on hover */}
+                    <button
+                      onClick={(e) => handleDeleteDocument(e, doc.id)}
+                      className="ml-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                      title="Delete document"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 ))
               )}
@@ -630,7 +653,7 @@ export default function App() {
 
               <div className="flex items-center space-x-2 text-slate-400 text-sm">
                 <Layers className="w-4 h-4" />
-                <span>Context: Full content of {selectedCount} documents sent to AI.</span>
+                <span>Context: Full content of {selectedCount} documents sent to AI. Deselect sources you don't want to talk about on the left.</span>
               </div>
             </div>
           ) : (

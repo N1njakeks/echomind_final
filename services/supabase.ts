@@ -135,6 +135,19 @@ export const fetchUserDocuments = async () => {
   }));
 };
 
+export const deleteDocument = async (id: string) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("No user");
+
+  const { error } = await supabase
+    .from('documents')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+};
+
 export const findSimilarDocuments = async (embedding: number[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
