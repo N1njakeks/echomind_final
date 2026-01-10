@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages } from './services/supabase';
-import { generateAnswer, generateEmbedding } from './services/gemini';
+import { generateAnswer, generateEmbedding, generateTopicSummary } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
+import ChromeExtensionSettings from './components/ChromeExtensionSettings';
 import { 
   LogOut, 
   FileText, 
@@ -10,7 +11,6 @@ import {
   Send, 
   Loader2, 
   BrainCircuit, 
-  Sparkles, 
   CheckSquare, 
   Square,
   Upload,
@@ -19,8 +19,55 @@ import {
   Plus,
   History,
   Menu as MenuIcon,
-  ChevronLeft
+  ChevronLeft,
+  PieChart as PieChartIcon,
+  Sparkles,
+  Settings
 } from 'lucide-react';
+
+// --- Simple Pie Chart Component ---
+const PieChart = ({ data }: { data: { label: string, value: number }[] }) => {
+  let cumulativeValue = 0;
+  const colors = ['#1e293b', '#475569', '#94a3b8', '#cbd5e1', '#e2e8f0'];
+
+  return (
+    <div className="flex flex-col md:flex-row items-center justify-center space-y-6 md:space-y-0 md:space-x-12 p-4">
+      <div className="relative w-48 h-48 md:w-56 md:h-56">
+        <svg viewBox="0 0 32 32" className="w-full h-full transform -rotate-90">
+          {data.map((item, index) => {
+            const percentage = item.value;
+            const strokeDasharray = `${percentage} 100`;
+            const strokeDashoffset = -cumulativeValue;
+            cumulativeValue += percentage;
+            return (
+              <circle
+                key={index}
+                cx="16"
+                cy="16"
+                r="16"
+                fill="transparent"
+                stroke={colors[index % colors.length]}
+                strokeWidth="32"
+                strokeDasharray={strokeDasharray}
+                strokeDashoffset={strokeDashoffset}
+                className="transition-all duration-1000 ease-out"
+              />
+            );
+          })}
+        </svg>
+      </div>
+      <div className="space-y-3">
+        {data.map((item, index) => (
+          <div key={index} className="flex items-center space-x-3">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }}></div>
+            <span className="text-sm font-medium text-slate-600">{item.label}</span>
+            <span className="text-xs text-slate-400 font-bold">{item.value}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // --- Auth Component ---
 const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
@@ -53,8 +100,8 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
     <div className="flex items-center justify-center h-full bg-slate-100 p-4">
       <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
         <div className="flex items-center justify-center mb-6 text-slate-800">
-          <BrainCircuit className="w-10 h-10 mr-2 text-indigo-600" />
-          <h1 className="text-2xl font-bold tracking-tight">EchoMind KB</h1>
+          <BrainCircuit className="w-10 h-10 mr-2 text-slate-700" />
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">EchoMind</h1>
         </div>
         
         <form onSubmit={handleAuth} className="space-y-4">
@@ -63,7 +110,7 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
             <input 
               type="email" 
               required
-              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base"
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-400 focus:outline-none text-base"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -73,7 +120,7 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
             <input 
               type="password" 
               required
-              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-base"
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-400 focus:outline-none text-base"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -84,7 +131,7 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:opacity-50 flex justify-center items-center text-base"
+            className="w-full bg-slate-800 text-white py-3 rounded-lg hover:bg-slate-900 transition-colors font-medium disabled:opacity-50 flex justify-center items-center text-base"
           >
             {loading ? <Loader2 className="animate-spin w-5 h-5" /> : (isSignUp ? 'Sign Up' : 'Sign In')}
           </button>
@@ -92,7 +139,7 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
 
         <p className="mt-6 text-center text-sm text-slate-500">
           {isSignUp ? "Already have an account?" : "No account yet?"}{' '}
-          <button onClick={() => setIsSignUp(!isSignUp)} className="text-indigo-600 hover:underline font-medium">
+          <button onClick={() => setIsSignUp(!isSignUp)} className="text-slate-800 hover:underline font-medium">
             {isSignUp ? 'Sign In' : 'Sign Up'}
           </button>
         </p>
@@ -114,7 +161,13 @@ export default function App() {
   const [chatMode, setChatMode] = useState<'standard' | 'reflective'>('standard');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   
+  // New: Overview States
+  const [showOverview, setShowOverview] = useState(false);
+  const [overviewData, setOverviewData] = useState<{ label: string, value: number }[] | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
   // Mobile UI States
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -162,11 +215,14 @@ export default function App() {
     setCurrentSessionId(null);
     setChatMode('standard');
     setIsSidebarOpen(false);
+    setShowOverview(false);
+    setOverviewData(null);
   };
 
   const handleSelectSession = async (sessionId: string) => {
     setLoading(true);
     setIsSidebarOpen(false);
+    setShowOverview(false);
     try {
       const msgs = await fetchChatMessages(sessionId);
       setMessages(msgs);
@@ -186,15 +242,18 @@ export default function App() {
     try {
       let content = '';
       let type = 'text';
+      let pageCount = 1;
 
       if (file.type === 'application/pdf') {
         type = 'pdf';
-        content = await extractTextFromPdf(file);
+        const pdfData = await extractTextFromPdf(file);
+        content = pdfData.text;
+        pageCount = pdfData.pageCount;
       } else {
         content = await file.text();
       }
 
-      await saveDocumentToCloud(file.name, content, type);
+      await saveDocumentToCloud(file.name, content, type, pageCount);
       await loadData();
     } catch (err) {
       console.error("Upload failed", err);
@@ -210,13 +269,33 @@ export default function App() {
     ));
   };
 
-  const sendMessage = async () => {
-    if (!inputText.trim() || loading) return;
+  const startAnalysis = async () => {
+    const selected = documents.filter(d => d.isSelected);
+    if (selected.length === 0) return;
+    
+    setIsAnalyzing(true);
+    setShowOverview(true);
+    try {
+      const summary = await generateTopicSummary(selected);
+      setOverviewData(summary);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const sendMessage = async (overrideText?: string) => {
+    const textToUse = overrideText || inputText;
+    if (!textToUse.trim() || loading) return;
+
+    // Transition from overview to chat if we started from there
+    if (showOverview) setShowOverview(false);
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      text: inputText,
+      text: textToUse,
       timestamp: Date.now()
     };
 
@@ -231,7 +310,7 @@ export default function App() {
       
       if (!sessionId) {
         const sessionData = await createChatSession(
-          userMsg.text.slice(0, 30) + (userMsg.text.length > 30 ? "..." : ""), 
+          textToUse.slice(0, 30) + (textToUse.length > 30 ? "..." : ""), 
           selectedDocs.map(d => d.id)
         );
         sessionId = sessionData.id;
@@ -245,7 +324,7 @@ export default function App() {
       if (selectedDocs.length > 0) {
         context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
       } else {
-        const embedding = await generateEmbedding(userMsg.text);
+        const embedding = await generateEmbedding(textToUse);
         const similarDocs = await findSimilarDocuments(embedding);
         if (similarDocs && similarDocs.length > 0) {
             context = similarDocs.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
@@ -271,7 +350,7 @@ export default function App() {
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'model',
-        text: "Sorry, I encountered an error processing your request.",
+        text: "Error processing request.",
         timestamp: Date.now()
       }]);
     } finally {
@@ -280,6 +359,8 @@ export default function App() {
   };
 
   if (!session) return <AuthScreen onLogin={() => {}} />;
+
+  const selectedPages = documents.filter(d => d.isSelected).reduce((sum, d) => sum + (d.pageCount || 1), 0);
 
   return (
     <div className="flex h-full bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
@@ -291,17 +372,20 @@ export default function App() {
         />
       )}
 
-      {/* Sidebar - Mobile Drawer / Desktop Fixed */}
+      {/* Sidebar */}
       <div className={`
         fixed md:relative inset-y-0 left-0 w-72 md:w-80 bg-white border-r border-slate-200 flex flex-col shadow-xl md:shadow-none z-30 transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h2 className="font-bold text-lg flex items-center text-slate-700">
-            <BrainCircuit className="w-5 h-5 mr-2 text-indigo-600" />
+            <BrainCircuit className="w-5 h-5 mr-2 text-slate-600" />
             EchoMind
           </h2>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1">
+            <button onClick={() => setShowSettings(true)} className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
+              <Settings className="w-4 h-4" />
+            </button>
             <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
               <LogOut className="w-4 h-4" />
             </button>
@@ -314,16 +398,14 @@ export default function App() {
         <div className="flex border-b border-slate-100">
           <button 
             onClick={() => setSidebarTab('docs')}
-            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center transition-colors ${sidebarTab === 'docs' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${sidebarTab === 'docs' ? 'text-slate-800 border-b-2 border-slate-800 bg-slate-50' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            <FileText className="w-4 h-4 mr-2" />
-            Docs
+            Knowledge
           </button>
           <button 
             onClick={() => setSidebarTab('chats')}
-            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center transition-colors ${sidebarTab === 'chats' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${sidebarTab === 'chats' ? 'text-slate-800 border-b-2 border-slate-800 bg-slate-50' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            <History className="w-4 h-4 mr-2" />
             History
           </button>
         </div>
@@ -331,49 +413,56 @@ export default function App() {
         {sidebarTab === 'docs' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="p-4">
-              <label className="flex items-center justify-center w-full px-4 py-3 bg-indigo-50 text-indigo-700 rounded-lg border border-indigo-100 border-dashed cursor-pointer hover:bg-indigo-100 transition-colors">
+              <label className="flex items-center justify-center w-full px-4 py-3 bg-slate-50 text-slate-600 rounded-lg border border-slate-200 border-dashed cursor-pointer hover:bg-slate-100 transition-colors">
                 {uploading ? (
                   <Loader2 className="w-5 h-5 animate-spin mr-2" />
                 ) : (
                   <Upload className="w-5 h-5 mr-2" />
                 )}
-                <span className="font-medium text-sm">{uploading ? 'Wait...' : 'Upload Knowledge'}</span>
+                <span className="font-medium text-sm">{uploading ? 'Processing' : 'Add Content'}</span>
                 <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
               </label>
             </div>
 
             <div className="flex-1 overflow-y-auto px-2 pb-4">
-              {documents.length === 0 && (
-                <div className="text-center p-8 text-slate-400 text-sm">No documents.</div>
-              )}
               {documents.map(doc => (
                 <div 
                   key={doc.id} 
                   className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
-                    doc.isSelected ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'
+                    doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
                   } border`}
                   onClick={() => { setViewingDoc(doc); if(window.innerWidth < 768) setIsSidebarOpen(false); }}
                 >
                   <button 
-                    className="mr-3 text-slate-400 group-hover:text-indigo-600 p-1 rounded hover:bg-slate-100"
+                    className="mr-3 text-slate-400"
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleDocumentSelection(doc.id);
                     }}
                   >
-                    {doc.isSelected ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5" />}
+                    {doc.isSelected ? <CheckSquare className="w-5 h-5 text-slate-800" /> : <Square className="w-5 h-5" />}
                   </button>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center mb-0.5">
-                      <FileText className="w-3.5 h-3.5 mr-1.5 text-slate-400 flex-shrink-0" />
-                      <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-indigo-900' : 'text-slate-700'}`}>
-                        {doc.title}
-                      </p>
-                    </div>
+                    <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
+                      {doc.title}
+                    </p>
+                    {doc.pageCount && <span className="text-[10px] text-slate-400">{doc.pageCount} pages</span>}
                   </div>
                 </div>
               ))}
             </div>
+            
+            {documents.some(d => d.isSelected) && (
+              <div className="p-4 border-t border-slate-100">
+                <button 
+                  onClick={startAnalysis}
+                  className="w-full bg-slate-800 text-white py-3 rounded-lg flex items-center justify-center text-sm font-bold shadow-lg"
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Analyze Knowledge
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -384,8 +473,8 @@ export default function App() {
                 onClick={handleNewChat}
                 className="flex items-center justify-center w-full px-4 py-3 bg-white text-slate-700 rounded-lg border border-slate-200 hover:bg-slate-50 transition-all shadow-sm"
               >
-                <Plus className="w-5 h-5 mr-2 text-indigo-600" />
-                <span className="font-medium text-sm">New Chat</span>
+                <Plus className="w-5 h-5 mr-2 text-slate-600" />
+                <span className="font-medium text-sm">New Session</span>
               </button>
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-4">
@@ -394,12 +483,12 @@ export default function App() {
                   key={session.id} 
                   onClick={() => handleSelectSession(session.id)}
                   className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer border ${
-                    currentSessionId === session.id ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50 border-transparent'
+                    currentSessionId === session.id ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
                   }`}
                 >
-                  <MessageSquare className={`w-4 h-4 mr-3 flex-shrink-0 ${currentSessionId === session.id ? 'text-indigo-600' : 'text-slate-400'}`} />
-                  <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-indigo-900' : 'text-slate-700'}`}>
-                    {session.title || "Untitled Chat"}
+                  <MessageSquare className={`w-4 h-4 mr-3 flex-shrink-0 ${currentSessionId === session.id ? 'text-slate-800' : 'text-slate-400'}`} />
+                  <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>
+                    {session.title || "Untitled Session"}
                   </p>
                 </div>
               ))}
@@ -420,17 +509,10 @@ export default function App() {
             </button>
             <div className="min-w-0">
               <h1 className="font-bold text-slate-800 text-base md:text-lg truncate">
-                {currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Chat") : "New Chat"}
+                {currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Session") : "New Session"}
               </h1>
-              <div className="flex items-center text-[10px] md:text-xs text-slate-500 uppercase tracking-wider">
-                <span className={chatMode === 'reflective' ? 'text-indigo-600 font-bold' : ''}>
-                  {chatMode === 'reflective' ? "• Smart Mode" : "• Standard"}
-                </span>
-                {documents.some(d => d.isSelected) && (
-                  <span className="ml-2 text-indigo-500 truncate italic">
-                    ({documents.filter(d => d.isSelected).length} docs active)
-                  </span>
-                )}
+              <div className="flex items-center text-[10px] md:text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                <span>{chatMode === 'reflective' ? "• V2 Active" : "• V1 Active"}</span>
               </div>
             </div>
           </div>
@@ -438,84 +520,151 @@ export default function App() {
           <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg scale-90 md:scale-100 origin-right">
             <button 
               onClick={() => setChatMode('standard')}
-              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
             >
-              Base
+              V1
             </button>
             <button 
               onClick={() => setChatMode('reflective')}
-              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
             >
-              Smart
+              V2
             </button>
           </div>
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
-          {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-slate-300 px-6 text-center">
-              <BrainCircuit className="w-16 h-16 mb-4 opacity-20 text-indigo-600" />
-              <p className="text-lg font-medium text-slate-400">EchoMind Knowledge Base</p>
-              <p className="text-sm max-w-xs mt-2">Start a chat or select documents from the menu to analyze them with AI.</p>
-            </div>
-          )}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
           
-          {messages.map((msg) => (
-            <div key={msg.id} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div 
-                className={`max-w-[90%] md:max-w-[80%] p-3.5 md:p-4 rounded-2xl shadow-sm text-[13px] md:text-sm whitespace-pre-wrap leading-relaxed ${
-                  msg.role === 'user' 
-                    ? 'bg-indigo-600 text-white rounded-tr-sm' 
-                    : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'
-                }`}
-              >
-                {msg.isThinking && msg.role === 'model' && (
-                  <div className="mb-2 pb-2 border-b border-slate-100 text-[9px] md:text-[10px] text-indigo-500 font-bold uppercase tracking-widest flex items-center">
-                    <Sparkles className="w-3 h-3 mr-1" />
-                    Reflective Insight
+          {/* Summary / Overview View */}
+          {showOverview ? (
+            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12 space-y-12 animate-in fade-in zoom-in-95 duration-700">
+              <div className="text-center max-w-2xl">
+                <h2 className="text-3xl md:text-4xl font-bold text-slate-800 mb-4 tracking-tight">
+                  Oh, you saved <span className="text-slate-500">{selectedPages} pages</span> of knowledge.
+                </h2>
+                <p className="text-slate-500 text-lg">Here's a pulse of what's currently in your selection.</p>
+              </div>
+
+              <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-3xl p-8 md:p-12 shadow-sm">
+                {isAnalyzing ? (
+                  <div className="flex flex-col items-center justify-center py-20 space-y-4">
+                    <Loader2 className="w-12 h-12 animate-spin text-slate-800" />
+                    <p className="text-slate-400 font-medium animate-pulse">Mapping content pulse...</p>
                   </div>
-                )}
-                {msg.text}
+                ) : overviewData ? (
+                  <div className="space-y-12">
+                    <PieChart data={overviewData} />
+                    
+                    <div className="pt-8 border-t border-slate-100">
+                      <p className="text-center text-slate-600 font-medium mb-6">
+                        You read a lot. What would you like to learn more about?
+                      </p>
+                      <div className="max-w-xl mx-auto flex items-center relative">
+                        <input
+                          autoFocus
+                          type="text"
+                          value={inputText}
+                          onChange={(e) => setInputText(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                          placeholder="Tell me what to explore..."
+                          className="w-full pl-6 pr-14 py-5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-slate-400 focus:outline-none focus:bg-white transition-all text-sm"
+                        />
+                        <button 
+                          onClick={() => sendMessage()}
+                          className="absolute right-3 p-3 bg-slate-800 text-white rounded-xl hover:bg-slate-900 transition-colors"
+                        >
+                          <Send className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex items-center space-x-2 text-slate-400 text-sm">
+                <BrainCircuit className="w-4 h-4" />
+                <span>Powered by V2 Synthesis</span>
               </div>
             </div>
-          ))}
-          {loading && (
-             <div className="flex w-full justify-start">
-               <div className="bg-white border border-slate-200 p-3 md:p-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center space-x-2">
-                 <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-                 <span className="text-xs text-slate-400 font-medium">EchoMind is thinking...</span>
-               </div>
-             </div>
+          ) : (
+            /* Chat Messages View */
+            <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+              {messages.length === 0 && (
+                <div className="h-96 flex flex-col items-center justify-center text-slate-300 px-6 text-center">
+                  <BrainCircuit className="w-16 h-16 mb-4 opacity-10" />
+                  <p className="text-sm">Ready for input.</p>
+                </div>
+              )}
+              
+              {messages.map((msg) => (
+                <div key={msg.id} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div 
+                    className={`max-w-[90%] md:max-w-[80%] p-3.5 md:p-4 rounded-2xl shadow-sm text-[13px] md:text-sm whitespace-pre-wrap leading-relaxed ${
+                      msg.role === 'user' 
+                        ? 'bg-slate-800 text-white rounded-tr-sm' 
+                        : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'
+                    }`}
+                  >
+                    {msg.isThinking && msg.role === 'model' && (
+                      <div className="mb-2 pb-2 border-b border-slate-50 text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center">
+                        <MessageCircle className="w-3 h-3 mr-1" />
+                        V2 Processing
+                      </div>
+                    )}
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                 <div className="flex w-full justify-start">
+                   <div className="bg-white border border-slate-200 p-3 md:p-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center space-x-2">
+                     <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                     <span className="text-xs text-slate-400">Processing...</span>
+                   </div>
+                 </div>
+              )}
+            </div>
           )}
         </div>
 
-        <div className="p-3 md:p-4 bg-white border-t border-slate-200 shrink-0">
-          <div className="max-w-4xl mx-auto relative flex items-center">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              placeholder="Ask anything..."
-              className="w-full pl-4 md:pl-5 pr-12 py-3 md:py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none focus:bg-white transition-all text-sm shadow-inner"
-              disabled={loading}
-            />
-            <button 
-              onClick={sendMessage}
-              disabled={loading || !inputText.trim()}
-              className="absolute right-2 p-2 md:p-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+        {!showOverview && (
+          <div className="p-3 md:p-4 bg-white border-t border-slate-200 shrink-0">
+            <div className="max-w-4xl mx-auto relative flex items-center">
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder="Message..."
+                className="w-full pl-4 md:pl-5 pr-12 py-3 md:py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-300 focus:outline-none focus:bg-white transition-all text-sm"
+                disabled={loading}
+              />
+              <button 
+                onClick={() => sendMessage()}
+                disabled={loading || !inputText.trim()}
+                className="absolute right-2 p-2 md:p-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-30 transition-colors"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Document Viewer Modal - Improved for Mobile */}
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+           <div onClick={e => e.stopPropagation()}>
+             <ChromeExtensionSettings />
+           </div>
+        </div>
+      )}
+
+      {/* Document Viewer */}
       {viewingDoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setViewingDoc(null)}>
           <div 
-            className="bg-white md:rounded-2xl shadow-2xl w-full h-full md:max-w-4xl md:h-[85vh] flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300"
+            className="bg-white md:rounded-2xl shadow-2xl w-full h-full md:max-w-4xl md:h-[85vh] flex flex-col overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-4 md:p-5 border-b border-slate-100 bg-white sticky top-0">
@@ -525,7 +674,7 @@ export default function App() {
                 </button>
                 <h3 className="font-bold text-slate-800 truncate text-sm md:text-base">{viewingDoc.title}</h3>
               </div>
-              <button onClick={() => setViewingDoc(null)} className="hidden md:block p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <button onClick={() => setViewingDoc(null)} className="hidden md:block p-2 hover:bg-slate-100 rounded-full">
                 <X className="w-5 h-5 text-slate-400" />
               </button>
             </div>
@@ -533,14 +682,6 @@ export default function App() {
               <pre className="whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-600 leading-relaxed">
                 {viewingDoc.content}
               </pre>
-            </div>
-            <div className="p-4 border-t border-slate-100 bg-white flex justify-end md:hidden">
-              <button 
-                onClick={() => setViewingDoc(null)}
-                className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm"
-              >
-                Close View
-              </button>
             </div>
           </div>
         </div>

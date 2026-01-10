@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
@@ -72,6 +72,42 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
   }
   
   return response.embeddings[0].values;
+};
+
+/**
+ * Analyzes documents to create a topic distribution for the summary chart.
+ */
+export const generateTopicSummary = async (documents: {title: string, content: string}[]): Promise<{label: string, value: number}[]> => {
+  const ai = getClient();
+  
+  // Create a combined snippet of documents (first ~2000 chars each)
+  const combinedContext = documents.map(d => `Title: ${d.title}\nSnippet: ${d.content.slice(0, 2000)}`).join('\n\n');
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analyze the following document snippets and identify 3-5 major overarching topics or themes. Provide a percentage breakdown of how much each topic represents the total knowledge base. Return only JSON.\n\n${combinedContext}`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            label: { type: Type.STRING, description: "Short topic name (max 2 words)" },
+            value: { type: Type.NUMBER, description: "Percentage value (integer, sum to 100)" }
+          },
+          required: ["label", "value"]
+        }
+      }
+    }
+  });
+
+  try {
+    return JSON.parse(response.text || '[]');
+  } catch (e) {
+    console.error("Failed to parse topic summary", e);
+    return [{ label: "General Knowledge", value: 100 }];
+  }
 };
 
 /**

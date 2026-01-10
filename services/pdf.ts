@@ -7,7 +7,12 @@ declare global {
   }
 }
 
-export const extractTextFromPdf = async (file: File): Promise<string> => {
+export interface PdfResult {
+  text: string;
+  pageCount: number;
+}
+
+export const extractTextFromPdf = async (file: File): Promise<PdfResult> => {
   if (!window.pdfjsLib) {
     throw new Error("PDF.js library not loaded");
   }
@@ -16,9 +21,10 @@ export const extractTextFromPdf = async (file: File): Promise<string> => {
   const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   
   let fullText = '';
+  const pageCount = pdf.numPages;
   
   // Iterate through all pages
-  for (let i = 1; i <= pdf.numPages; i++) {
+  for (let i = 1; i <= pageCount; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const pageText = textContent.items
@@ -28,5 +34,8 @@ export const extractTextFromPdf = async (file: File): Promise<string> => {
     fullText += `--- Page ${i} ---\n${pageText}\n\n`;
   }
   
-  return fullText.trim();
+  return {
+    text: fullText.trim(),
+    pageCount: pageCount
+  };
 };

@@ -2,7 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from './gemini'; 
 
 // Environment Variables
-// Fix for Vercel/Vite: Check import.meta.env first
 const viteEnv = (import.meta as any).env;
 
 const SUPABASE_URL = 
@@ -14,10 +13,6 @@ const SUPABASE_ANON_KEY =
   viteEnv?.VITE_SUPABASE_ANON_KEY || 
   process.env.VITE_SUPABASE_ANON_KEY || 
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhc2ZkZWRjeW12c2tydXl0cXhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5MzYxODIsImV4cCI6MjA3OTUxMjE4Mn0.8ZRtNH419n-Ut6EhZtrJDvdtiN84wHsj3aMxxMVmXTg';
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error("Supabase credentials missing. Please check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
-}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -38,12 +33,51 @@ export const signOut = async () => {
   await supabase.auth.signOut();
 };
 
+// --- API Keys (Chrome Extension) ---
+export const fetchApiKey = async (label: string) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from('api_keys')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('label', label)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching API key:", error);
+    return null;
+  }
+  return data;
+};
+
+export const createApiKey = async (label: string) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("No user");
+
+  // Generate a random key prefixed with em_ (EchoMind)
+  const key = 'em_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+  // Upsert ensures we update the key if it already exists for this label/user, or insert if not
+  const { data, error } = await supabase
+    .from('api_keys')
+    .upsert(
+      [{ user_id: user.id, label, key }], 
+      { onConflict: 'user_id, label' }
+    )
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
 // --- Documents ---
-export const saveDocumentToCloud = async (title: string, content: string, type: string) => {
+export const saveDocumentToCloud = async (title: string, content: string, type: string, pageCount?: number) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("User not authenticated");
 
-  // Embedding Generation Logic (wird in gemini.ts implementiert)
   let embedding = null;
   try {
       if (content.length > 50) {
@@ -53,7 +87,7 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
 
   const { data, error } = await supabase
     .from('documents')
-    .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
+    .insert([{ user_id: user.id, title, content, type, embedding, is_read: false, page_count: pageCount }])
     .select()
     .single();
 
@@ -67,7 +101,7 @@ export const fetchUserDocuments = async () => {
 
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, content, type, is_read, created_at')
+    .select('id, title, content, type, is_read, created_at, page_count')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -79,13 +113,12 @@ export const fetchUserDocuments = async () => {
     content: doc.content,
     type: doc.type,
     isRead: doc.is_read,
-    isSelected: false, // Default UI state
-    createdAt: new Date(doc.created_at).getTime()
+    isSelected: false,
+    createdAt: new Date(doc.created_at).getTime(),
+    pageCount: doc.page_count
   }));
 };
 
-// --- Vector Search (RAG) ---
-// WICHTIG: Nutzt die existierende RPC Funktion 'match_documents'
 export const findSimilarDocuments = async (embedding: number[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
@@ -99,7 +132,6 @@ export const findSimilarDocuments = async (embedding: number[]) => {
 
     if (error || !data) return [];
     
-    // Fetch full content for context
     const ids = data.map((d: any) => d.id);
     if (ids.length === 0) return [];
 
@@ -113,11 +145,11 @@ export const findSimilarDocuments = async (embedding: number[]) => {
         title: doc.title,
         content: doc.content,
         type: doc.type,
-        createdAt: new Date(doc.created_at).getTime()
+        createdAt: new Date(doc.created_at).getTime(),
+        pageCount: doc.page_count
     }));
 };
 
-// --- Chat Persistence ---
 export const createChatSession = async (title: string, sourceIds: string[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("No user");
@@ -155,7 +187,6 @@ export const fetchChatMessages = async (sessionId: string) => {
         role: msg.role,
         text: msg.text,
         timestamp: new Date(msg.created_at).getTime(),
-        // Map the database column 'is_thinking' to our frontend property 'isThinking'
         isThinking: msg.is_thinking 
     }));
 };
@@ -169,7 +200,6 @@ export const saveChatMessage = async (sessionId: string, message: any) => {
         user_id: user.id,
         role: message.role,
         text: message.text,
-        // Save whether this was a smart/reflective response
         is_thinking: message.isThinking || false 
     }]);
 };

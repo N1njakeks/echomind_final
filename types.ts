@@ -6,6 +6,7 @@ export interface SourceFile {
   isRead: boolean;
   isSelected: boolean;
   createdAt: number;
+  pageCount?: number;
 }
 
 export interface ChatMessage {
