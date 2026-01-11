@@ -61,7 +61,7 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
                 key={index}
                 style={{ width: `${widthPercentage}%` }} 
                 className={`${colors[index % colors.length]} h-full transition-all duration-1000 ease-out border-r border-white/10 last:border-0`}
-                title={`${item.label}: ${item.value}%`}
+                title={`${item.label}: ${Math.round(item.value)}%`}
               />
             );
           })}
@@ -79,7 +79,9 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
               <div className={`w-3 h-3 rounded-full ${colors[index % colors.length]} group-hover:scale-110 transition-transform`} />
               <span className="font-medium text-slate-700 text-sm truncate max-w-[140px]">{item.label}</span>
             </div>
-            <span className="text-sm font-bold text-slate-400 group-hover:text-slate-600">{item.value}%</span>
+            <span className="text-sm font-bold text-slate-400 group-hover:text-slate-600">
+              {Math.round(item.value)}%
+            </span>
           </div>
         ))}
       </div>
