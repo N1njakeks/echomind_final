@@ -348,7 +348,9 @@ export default function App() {
       id: crypto.randomUUID(),
       role: 'user',
       text: textToUse,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      // NEW: Also mark the user question as V2/Reflective if current mode is reflective
+      isThinking: chatMode === 'reflective'
     };
 
     const newMessages = [...messages, userMsg];

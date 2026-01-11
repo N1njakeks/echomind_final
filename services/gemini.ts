@@ -4,19 +4,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
-  const viteEnv = (import.meta as any).env;
-  
-  const apiKey = 
-    viteEnv?.VITE_API_KEY || 
-    process.env.VITE_API_KEY || 
-    process.env.API_KEY;
-  
-  if (!apiKey) {
-    console.error("API Key missing. Please set VITE_API_KEY in your Vercel Environment Variables.");
-  }
-
+  // Always use the process.env.API_KEY exclusively as required.
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: apiKey || '' });
+    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
   }
   return aiClient;
 };
@@ -63,7 +53,7 @@ STYLE GUIDELINES
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
   const response = await ai.models.embedContent({
-    model: 'gemini-embedding-1.0',
+    model: 'text-embedding-004',
     contents: text
   });
 
