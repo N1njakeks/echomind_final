@@ -38,11 +38,15 @@ export const fetchApiKey = async (label: string) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
+  // Use limit(1) and order desc to ensure we get the latest key
+  // and avoid "PGRST116" (multiple rows) errors if duplicates exist.
   const { data, error } = await supabase
     .from('api_keys')
     .select('*')
     .eq('user_id', user.id)
     .eq('label', label)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -53,19 +57,23 @@ export const fetchApiKey = async (label: string) => {
 };
 
 export const createApiKey = async (label: string) => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("No user");
+  // 1. Generate a secure key (sk_app_...)
+  const uuid = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+  const key = `sk_app_${uuid.replace(/-/g, '')}`;
 
-  // Generate a random key prefixed with em_ (EchoMind)
-  const key = 'em_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  // 2. Delete existing keys for this label first (Manual "Upsert" logic).
+  // This solves the 42P10 error by avoiding reliance on a unique DB constraint.
+  // RLS ensures we only delete our own keys.
+  await supabase
+    .from('api_keys')
+    .delete()
+    .eq('label', label);
 
-  // Upsert ensures we update the key if it already exists for this label/user, or insert if not
+  // 3. Insert new key WITHOUT passing user_id manually.
+  // The DB should handle user_id via "default auth.uid()" as per your setup.
   const { data, error } = await supabase
     .from('api_keys')
-    .upsert(
-      [{ user_id: user.id, label, key }], 
-      { onConflict: 'user_id, label' }
-    )
+    .insert([{ key, label }]) 
     .select()
     .single();
 
