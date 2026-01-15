@@ -198,9 +198,17 @@ export default function App() {
       if (session) loadData();
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) loadData();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setDocuments([]);
+        setMessages([]);
+        setChatSessions([]);
+        setCurrentSessionId(null);
+      } else {
+        setSession(session);
+        if (session) loadData();
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -213,12 +221,20 @@ export default function App() {
   }, [messages, loading]);
 
   const loadData = async () => {
-    const [docs, sessions] = await Promise.all([
-      fetchUserDocuments(),
-      fetchChatSessions()
-    ]);
-    setDocuments(docs);
-    setChatSessions(sessions);
+    try {
+      const [docs, sessions] = await Promise.all([
+        fetchUserDocuments(),
+        fetchChatSessions()
+      ]);
+      setDocuments(docs);
+      setChatSessions(sessions);
+    } catch (e: any) {
+      console.error("Failed to load data", e);
+      // If we get a refresh token error, sign out to reset state
+      if (e.message && (e.message.includes("Refresh Token") || e.message.includes("refresh_token"))) {
+        await handleLogout();
+      }
+    }
   };
 
   const handleLogout = async () => {

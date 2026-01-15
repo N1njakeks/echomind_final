@@ -4,9 +4,18 @@ import { GoogleGenAI, Type } from "@google/genai";
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
-  // Always use the process.env.API_KEY exclusively as required.
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    // Robustly fetch API key:
+    // 1. process.env.API_KEY (Standard/Vercel System Env)
+    // 2. import.meta.env.VITE_API_KEY (Vite Client Env)
+    // 3. Fallback to empty string to prevent crash, though calls will fail.
+    const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY || '';
+    
+    if (!apiKey) {
+      console.warn("API Key not found. Please set VITE_API_KEY or API_KEY in your environment variables.");
+    }
+
+    aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
 };
