@@ -8,8 +8,10 @@ const getClient = () => {
     // Robustly fetch API key:
     // 1. process.env.API_KEY (Standard/Vercel System Env)
     // 2. import.meta.env.VITE_API_KEY (Vite Client Env)
-    // 3. Fallback to empty string to prevent crash, though calls will fail.
-    const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY || '';
+    // 3. Fallback to the provided free key for immediate usage outside managed envs.
+    const apiKey = process.env.API_KEY || 
+                   (import.meta as any).env?.VITE_API_KEY || 
+                   'AIzaSyCML-V2bg-gisW01G9WBifLUCKBcEBov6c';
     
     if (!apiKey) {
       console.warn("API Key not found. Please set VITE_API_KEY or API_KEY in your environment variables.");
@@ -166,6 +168,10 @@ export const generateAnswer = async (
     return response.text || "No response generated.";
   } catch (error) {
     console.error("Gemini Generation Error:", error);
-    return "I encountered an error. Please check your connection.";
+    // Return the actual error message in development/testing to help debug
+    if (error instanceof Error) {
+        return `Connection Error: ${error.message}`;
+    }
+    return "I encountered an error. Please check your connection and API Key.";
   }
 };
