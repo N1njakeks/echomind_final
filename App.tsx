@@ -486,7 +486,8 @@ export default function App() {
   const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
 
   return (
-    <div className="flex h-full bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
+    // Changed: Use 100dvh for better mobile browser support
+    <div className="flex h-[100dvh] bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
       {/* Mobile Backdrop */}
       {isSidebarOpen && (
         <div 
@@ -701,11 +702,11 @@ export default function App() {
           </div>
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto relative overscroll-contain">
           
           {/* Summary / Overview View */}
           {showOverview ? (
-            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12 space-y-12 animate-in fade-in zoom-in-95 duration-700">
+            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12 space-y-12 animate-in fade-in zoom-in-95 duration-700 pb-32">
               <div className="text-center max-w-2xl">
                 <h2 className="text-3xl md:text-4xl font-bold text-slate-800 mb-4 tracking-tight">
                   Oh, you saved <span className="text-slate-500">{selectedPages} pages</span> of knowledge.
@@ -756,7 +757,8 @@ export default function App() {
             </div>
           ) : (
             /* Chat Messages View */
-            <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-20">
+            /* INCREASED BOTTOM PADDING FOR MOBILE (pb-32) */
+            <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-32 md:pb-20">
               {messages.length === 0 && (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-300 px-6 text-center">
                   {documents.length > 0 ? (
@@ -828,7 +830,8 @@ export default function App() {
         </div>
 
         {!showOverview && (
-          <div className="p-3 md:p-4 bg-white border-t border-slate-200 shrink-0">
+          // Added z-index and shadow for better separation on mobile
+          <div className="p-3 md:p-4 bg-white border-t border-slate-200 shrink-0 z-20 shadow-[0_-8px_20px_-5px_rgba(0,0,0,0.05)] md:shadow-none pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
             <div className="max-w-4xl mx-auto relative flex items-center">
               <input
                 type="text"
