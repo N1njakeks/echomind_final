@@ -1,7 +1,7 @@
 export interface SourceFile {
   id: string;
   title: string;
-  content: string;
+  content?: string; // Changed to optional for lazy loading
   type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video';
   isRead: boolean;
   isSelected: boolean;

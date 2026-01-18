@@ -38,8 +38,6 @@ export const fetchApiKey = async (label: string) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  // Use limit(1) and order desc to ensure we get the latest key
-  // and avoid "PGRST116" (multiple rows) errors if duplicates exist.
   const { data, error } = await supabase
     .from('api_keys')
     .select('*')
@@ -57,20 +55,14 @@ export const fetchApiKey = async (label: string) => {
 };
 
 export const createApiKey = async (label: string) => {
-  // 1. Generate a secure key (sk_app_...)
   const uuid = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
   const key = `sk_app_${uuid.replace(/-/g, '')}`;
 
-  // 2. Delete existing keys for this label first (Manual "Upsert" logic).
-  // This solves the 42P10 error by avoiding reliance on a unique DB constraint.
-  // RLS ensures we only delete our own keys.
   await supabase
     .from('api_keys')
     .delete()
     .eq('label', label);
 
-  // 3. Insert new key WITHOUT passing user_id manually.
-  // The DB should handle user_id via "default auth.uid()" as per your setup.
   const { data, error } = await supabase
     .from('api_keys')
     .insert([{ key, label }]) 
@@ -93,37 +85,30 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
       }
   } catch (e) { console.warn("Embedding failed", e); }
 
-  // First attempt: Try saving with page_count
+  // REVERT: Removed page_count to fix DB error
   const { data, error } = await supabase
     .from('documents')
-    .insert([{ user_id: user.id, title, content, type, embedding, is_read: false, page_count: pageCount }])
+    .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
     .select()
     .single();
 
-  if (error) {
-    // Fallback: If page_count column is missing in DB (legacy schema), save without it
-    console.warn("Save failed, retrying without metadata...", error.message);
-    const { data: retryData, error: retryError } = await supabase
-      .from('documents')
-      .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
-      .select()
-      .single();
-      
-    if (retryError) throw retryError;
-    return retryData;
-  }
+  if (error) throw error;
   return data;
 };
 
-export const fetchUserDocuments = async () => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
+export const fetchUserDocuments = async (userId?: string) => {
+  let uid = userId;
+  if (!uid) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return [];
+      uid = user.id;
+  }
 
-  // Use select('*') to avoid errors if specific columns (like page_count) are missing in the schema
+  // REVERT: Removed page_count from select to fix "column does not exist" error
   const { data, error } = await supabase
     .from('documents')
-    .select('*')
-    .eq('user_id', user.id)
+    .select('id, title, type, is_read, created_at')
+    .eq('user_id', uid)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -134,13 +119,26 @@ export const fetchUserDocuments = async () => {
   return data.map((doc: any) => ({
     id: doc.id,
     title: doc.title,
-    content: doc.content,
     type: doc.type,
     isRead: doc.is_read,
     isSelected: false,
     createdAt: new Date(doc.created_at).getTime(),
-    pageCount: doc.page_count // Will be undefined if column missing, which is fine
+    pageCount: 1 // Default fallback since DB column missing
   }));
+};
+
+// Keep Lazy load content (It works and isn't the cause of the error)
+export const fetchDocumentContent = async (id: string): Promise<string> => {
+    const { data, error } = await supabase
+        .from('documents')
+        .select('content')
+        .eq('id', id)
+        .single();
+        
+    if (error || !data) {
+        throw new Error("Could not fetch content");
+    }
+    return data.content;
 };
 
 export const deleteDocument = async (id: string) => {
@@ -172,9 +170,10 @@ export const findSimilarDocuments = async (embedding: number[]) => {
     const ids = data.map((d: any) => d.id);
     if (ids.length === 0) return [];
 
+    // REVERT: Removed page_count here too
     const { data: docs } = await supabase
         .from('documents')
-        .select('*') // Changed to * for robustness
+        .select('id, title, content, type, created_at') 
         .in('id', ids);
 
     return (docs || []).map((doc: any) => ({
@@ -183,7 +182,7 @@ export const findSimilarDocuments = async (embedding: number[]) => {
         content: doc.content,
         type: doc.type,
         createdAt: new Date(doc.created_at).getTime(),
-        pageCount: doc.page_count
+        pageCount: 1
     }));
 };
 
@@ -191,8 +190,6 @@ export const createChatSession = async (title: string, sourceIds: string[], mode
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("No user");
     
-    // Fallback path: 'mode' column is missing in DB. Store indicator in title.
-    // This ensures the mode is saved even if the schema isn't updated.
     let fallbackTitle = title;
     if (mode === 'reflective') {
         fallbackTitle = `${title} [V2]`;
@@ -205,24 +202,28 @@ export const createChatSession = async (title: string, sourceIds: string[], mode
         
     if (error) throw error;
     
-    // Return cleaned up object to UI so it looks correct immediately
     return { ...data, title: title, mode: mode }; 
 };
 
-export const fetchChatSessions = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
+export const fetchChatSessions = async (userId?: string) => {
+    let uid = userId;
+    if (!uid) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return [];
+        uid = user.id;
+    }
+
+    // REVERT: Removed .limit(40) - loading all chats again as requested
     const { data } = await supabase
         .from('chat_sessions')
-        .select('*')
-        .eq('user_id', user.id)
+        .select('*') 
+        .eq('user_id', uid)
         .order('created_at', { ascending: false });
         
     return (data || []).map((session: any) => {
         let mode = 'standard';
         let title = session.title;
 
-        // Backward compatibility / Fallback: Check title for magic tag since column is missing
         if (title && title.includes('[V2]')) {
             mode = 'reflective';
             title = title.replace('[V2]', '').trim();

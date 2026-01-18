@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent } from './services/supabase';
 import { generateAnswer, generateEmbedding, generateTopicSummary } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -196,7 +196,7 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) loadData();
+      if (session) loadData(session.user.id);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -208,7 +208,7 @@ export default function App() {
         setCurrentSessionId(null);
       } else {
         setSession(session);
-        if (session) loadData();
+        if (session) loadData(session.user.id);
       }
     });
 
@@ -221,11 +221,20 @@ export default function App() {
     }
   }, [messages, loading]);
 
-  const loadData = async () => {
+  const loadData = async (userId?: string) => {
+    // Robust fallback if userId is not passed (though it should be)
+    let uid = userId;
+    if (!uid) {
+        const { data } = await supabase.auth.getSession();
+        uid = data.session?.user.id;
+    }
+    if (!uid) return;
+
     try {
+      // Optimized: fetch functions now accept userId to skip internal getUser calls
       const [docs, sessions] = await Promise.all([
-        fetchUserDocuments(),
-        fetchChatSessions()
+        fetchUserDocuments(uid),
+        fetchChatSessions(uid)
       ]);
       setDocuments(docs);
       setChatSessions(sessions);
@@ -249,8 +258,6 @@ export default function App() {
   const handleNewChat = () => {
     setMessages([]);
     setCurrentSessionId(null);
-    // Do NOT reset chatMode here; let user keep their preference for the NEW session
-    // But once the session starts, it will be locked.
     setIsSidebarOpen(false);
     setShowOverview(false);
     setOverviewData(null);
@@ -267,8 +274,6 @@ export default function App() {
       setMessages(msgs);
       setCurrentSessionId(sessionId);
       
-      // CRITICAL FIX: Source of truth is the messages themselves.
-      // If ANY message in the history has isThinking=true, the session is V2 (Reflective).
       const hasReflectiveHistory = msgs.some(m => m.isThinking === true);
       
       if (hasReflectiveHistory) {
@@ -304,7 +309,8 @@ export default function App() {
       }
 
       await saveDocumentToCloud(file.name, content, type, pageCount);
-      await loadData();
+      // Reload data to show new doc. Passing session.user.id if available.
+      if (session?.user?.id) await loadData(session.user.id);
     } catch (err) {
       console.error("Upload failed", err);
     } finally {
@@ -314,7 +320,7 @@ export default function App() {
   };
 
   const handleDeleteDocument = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation(); // Prevent opening the document
+    e.stopPropagation(); 
     if (!confirm("Are you sure you want to delete this document?")) return;
 
     try {
@@ -332,14 +338,73 @@ export default function App() {
     ));
   };
 
+  // HELPER: Hydrate documents with content if needed
+  const hydrateDocuments = async (docsToHydrate: SourceFile[]) => {
+      const updatedDocs = [...documents];
+      let needsUpdate = false;
+
+      const hydrated = await Promise.all(docsToHydrate.map(async (doc) => {
+          if (doc.content) return doc; // Already has content
+          
+          try {
+              const content = await fetchDocumentContent(doc.id);
+              // Update local cache
+              const idx = updatedDocs.findIndex(d => d.id === doc.id);
+              if (idx !== -1) {
+                  updatedDocs[idx] = { ...updatedDocs[idx], content };
+                  needsUpdate = true;
+              }
+              return { ...doc, content };
+          } catch (e) {
+              console.error(`Failed to hydrate doc ${doc.id}`, e);
+              return doc;
+          }
+      }));
+
+      if (needsUpdate) {
+          setDocuments(updatedDocs);
+      }
+      return hydrated;
+  };
+
+  const handleViewDocument = async (doc: SourceFile) => {
+      // Lazy load content if missing
+      if (!doc.content) {
+          setUploading(true); // Reuse uploading spinner for "Loading Doc"
+          try {
+              const content = await fetchDocumentContent(doc.id);
+              const fullDoc = { ...doc, content };
+              
+              // Update state so we don't fetch again
+              setDocuments(prev => prev.map(d => d.id === doc.id ? fullDoc : d));
+              setViewingDoc(fullDoc);
+          } catch (e) {
+              console.error("Error loading document content", e);
+              alert("Could not load document content.");
+          } finally {
+              setUploading(false);
+          }
+      } else {
+          setViewingDoc(doc);
+      }
+
+      if(window.innerWidth < 768) setIsSidebarOpen(false);
+  };
+
   const selectAllAndAnalyze = async () => {
+    // Optimistically select all UI first
     const updatedDocs = documents.map(d => ({ ...d, isSelected: true }));
     setDocuments(updatedDocs);
     
     setIsAnalyzing(true);
     setShowOverview(true);
     try {
-      const summary = await generateTopicSummary(updatedDocs);
+      // Ensure content is loaded before sending to AI
+      const hydratedDocs = await hydrateDocuments(updatedDocs);
+      // Filter out any that failed to load content (undefined or empty string safe check)
+      const validDocs = hydratedDocs.filter(d => d.content) as {title: string, content: string}[];
+      
+      const summary = await generateTopicSummary(validDocs);
       setOverviewData(summary);
     } catch (e) {
       console.error(e);
@@ -355,7 +420,10 @@ export default function App() {
     setIsAnalyzing(true);
     setShowOverview(true);
     try {
-      const summary = await generateTopicSummary(selected);
+      const hydratedDocs = await hydrateDocuments(selected);
+      const validDocs = hydratedDocs.filter(d => d.content) as {title: string, content: string}[];
+
+      const summary = await generateTopicSummary(validDocs);
       setOverviewData(summary);
     } catch (e) {
       console.error(e);
@@ -368,11 +436,9 @@ export default function App() {
     const textToUse = overrideText || inputText;
     if (!textToUse.trim() || loading) return;
 
-    // CAP: Check message limit (User messages only)
     const userMsgCount = messages.filter(m => m.role === 'user').length;
     if (userMsgCount >= MAX_MESSAGES_PER_SESSION) return;
 
-    // Transition from overview to chat
     if (showOverview) setShowOverview(false);
 
     const userMsg: ChatMessage = {
@@ -392,25 +458,32 @@ export default function App() {
       let sessionId = currentSessionId;
       const selectedDocs = documents.filter(d => d.isSelected);
       
+      // LAZY LOAD: Ensure selected docs have content before processing
+      let docsWithContent: SourceFile[] = [];
+      if (selectedDocs.length > 0) {
+          docsWithContent = await hydrateDocuments(selectedDocs);
+      }
+
       if (!sessionId) {
-        // Create new session with the CURRENTLY SELECTED mode
         const sessionData = await createChatSession(
           textToUse.slice(0, 30) + (textToUse.length > 30 ? "..." : ""), 
           selectedDocs.map(d => d.id),
-          chatMode // Pass the mode to lock it via Title fallback
+          chatMode 
         );
         sessionId = sessionData.id;
         setCurrentSessionId(sessionId);
-        fetchChatSessions().then(setChatSessions);
+        // Refresh session list to show new chat immediately, passing ID
+        if (session?.user?.id) fetchChatSessions(session.user.id).then(setChatSessions);
       }
 
       await saveChatMessage(sessionId!, userMsg);
 
       let context = "";
-      if (selectedDocs.length > 0) {
-        context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
+      if (docsWithContent.length > 0) {
+        context = docsWithContent.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
       } else {
         const embedding = await generateEmbedding(textToUse);
+        // Note: findSimilarDocuments already fetches content internally for the matches
         const similarDocs = await findSimilarDocuments(embedding);
         if (similarDocs && similarDocs.length > 0) {
             context = similarDocs.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
@@ -451,8 +524,6 @@ export default function App() {
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
   
   const isSessionLocked = !!currentSessionId;
-  
-  // Update limit logic to only count user messages
   const userMessageCount = messages.filter(m => m.role === 'user').length;
   const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
 
@@ -531,7 +602,8 @@ export default function App() {
                     className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${
                       doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
                     } border`}
-                    onClick={() => { setViewingDoc(doc); if(window.innerWidth < 768) setIsSidebarOpen(false); }}
+                    // CHANGED: Use handleViewDocument instead of setting state directly
+                    onClick={() => handleViewDocument(doc)}
                   >
                     <button 
                       className="mr-3 text-slate-400"
@@ -606,7 +678,6 @@ export default function App() {
                     <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>
                       {session.title || "Untitled Session"}
                     </p>
-                    {/* Updated to remove 'Reflective' text */}
                     <p className="text-[10px] text-slate-400 truncate">
                        {session.mode === 'reflective' ? 'V2' : 'V1'}
                     </p>
@@ -846,9 +917,15 @@ export default function App() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 md:p-8 bg-slate-50/50">
-              <pre className="whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-600 leading-relaxed">
-                {viewingDoc.content}
-              </pre>
+              {viewingDoc.content ? (
+                <pre className="whitespace-pre-wrap font-sans text-xs md:text-sm text-slate-600 leading-relaxed">
+                  {viewingDoc.content}
+                </pre>
+              ) : (
+                <div className="flex justify-center items-center h-full text-slate-400">
+                  <Loader2 className="animate-spin w-8 h-8" />
+                </div>
+              )}
             </div>
           </div>
         </div>
