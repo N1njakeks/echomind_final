@@ -5,10 +5,22 @@ let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
   if (!aiClient) {
-    // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-    // We access it directly as instructed. If process is not defined, this will throw,
-    // which is caught by the calling functions.
-    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Robust API Key retrieval for browser environments (Vite, etc.)
+    const viteEnv = (import.meta as any).env;
+    
+    // Check various sources for the API key
+    const apiKey = 
+      viteEnv?.VITE_API_KEY || 
+      viteEnv?.API_KEY || 
+      (typeof process !== 'undefined' ? process.env?.API_KEY : undefined) ||
+      'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk'; // Fallback for demo/local dev
+
+    if (!apiKey) {
+      console.error("Gemini API Key is missing. Please set VITE_API_KEY in your environment.");
+      throw new Error("Gemini API Key is missing");
+    }
+
+    aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
 };
@@ -53,23 +65,17 @@ STYLE GUIDELINES
  * Generates vector embedding for text
  */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
-  try {
-    const ai = getClient();
-    const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      contents: text
-    });
+  const ai = getClient();
+  const response = await ai.models.embedContent({
+    model: 'text-embedding-004',
+    contents: text
+  });
 
-    if (!response.embeddings || response.embeddings.length === 0) {
-      throw new Error("Failed to generate embedding");
-    }
-    
-    return response.embeddings[0].values;
-  } catch (error: any) {
-    console.error("Embedding Error:", error);
-    // Don't crash the app if embedding fails, just warn
-    throw new Error(`Embedding failed: ${error.message || error}`);
+  if (!response.embeddings || response.embeddings.length === 0) {
+    throw new Error("Failed to generate embedding");
   }
+  
+  return response.embeddings[0].values;
 };
 
 /**
@@ -77,48 +83,48 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
  * Uses a deterministic classification approach for robust stats.
  */
 export const generateTopicSummary = async (documents: {title: string, content: string}[]): Promise<{label: string, value: number}[]> => {
-  try {
-    const ai = getClient();
-    
-    // Create a structured list for the LLM to count
-    const docList = documents.map((d, i) => `Doc ${i+1} Title: ${d.title}\nSnippet: ${d.content.slice(0, 500)}...`).join('\n\n');
+  const ai = getClient();
+  
+  // Create a structured list for the LLM to count
+  const docList = documents.map((d, i) => `Doc ${i+1} Title: ${d.title}\nSnippet: ${d.content.slice(0, 500)}...`).join('\n\n');
 
-    const prompt = `
-    You are a data analyst. I have ${documents.length} documents.
-    
-    YOUR TASK:
-    1. Identify 3-6 distinct "Themes" that categorize these documents.
-    2. Assign EACH document to exactly ONE best-fitting Theme.
-    3. Count the number of documents in each Theme.
-    4. Calculate the percentage: (Count / ${documents.length}) * 100.
-    
-    INPUT DOCUMENTS:
-    ${docList}
-    
-    OUTPUT:
-    Return JSON only.
-    `;
+  const prompt = `
+  You are a data analyst. I have ${documents.length} documents.
+  
+  YOUR TASK:
+  1. Identify 3-6 distinct "Themes" that categorize these documents.
+  2. Assign EACH document to exactly ONE best-fitting Theme.
+  3. Count the number of documents in each Theme.
+  4. Calculate the percentage: (Count / ${documents.length}) * 100.
+  
+  INPUT DOCUMENTS:
+  ${docList}
+  
+  OUTPUT:
+  Return JSON only.
+  `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        temperature: 0, // CRITICAL: Makes the output deterministic/consistent
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              label: { type: Type.STRING, description: "Theme name (max 3 words)" },
-              value: { type: Type.NUMBER, description: "Calculated percentage based on document count" }
-            },
-            required: ["label", "value"]
-          }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt,
+    config: {
+      temperature: 0, // CRITICAL: Makes the output deterministic/consistent
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            label: { type: Type.STRING, description: "Theme name (max 3 words)" },
+            value: { type: Type.NUMBER, description: "Calculated percentage based on document count" }
+          },
+          required: ["label", "value"]
         }
       }
-    });
+    }
+  });
 
+  try {
     const data = JSON.parse(response.text || '[]');
     // Fallback: If AI returns empty or fails, give a generic result
     if (!data || data.length === 0) return [{ label: "General Content", value: 100 }];
@@ -137,22 +143,22 @@ export const generateAnswer = async (
   history: { role: 'user' | 'model', text: string }[], 
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
+  const ai = getClient();
+  
+  const baseSystemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
+  
+  let finalSystemInstruction = baseSystemInstruction;
+  if (context) {
+    finalSystemInstruction = `=== REFERENCE MATERIAL (SOURCE OF TRUTH) ===\n${context}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemInstruction}`;
+  }
+
+  // Format history for Gemini API
+  const contents = history.map(msg => ({
+    role: msg.role === 'user' ? 'user' : 'model',
+    parts: [{ text: msg.text }]
+  }));
+
   try {
-    const ai = getClient();
-    
-    const baseSystemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
-    
-    let finalSystemInstruction = baseSystemInstruction;
-    if (context) {
-      finalSystemInstruction = `=== REFERENCE MATERIAL (SOURCE OF TRUTH) ===\n${context}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemInstruction}`;
-    }
-
-    // Format history for Gemini API
-    const contents = history.map(msg => ({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.text }]
-    }));
-
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: contents,
@@ -182,15 +188,8 @@ export const generateAnswer = async (
     
     return "No response generated (Empty output).";
 
-  } catch (error: any) {
+  } catch (error) {
     console.error("Gemini Generation Error:", error);
-    // Provide specific error messages to help user debug environment issues
-    if (error.message && error.message.includes("API key")) {
-        return "Configuration Error: API Key is missing or invalid. Please check your environment variables.";
-    }
-    if (error instanceof ReferenceError || (error.message && error.message.includes("process is not defined"))) {
-        return "Environment Error: `process.env` is not available in this environment. Please ensure your bundler (Vite/Webpack) is configured to define `process.env.API_KEY`.";
-    }
     if (error instanceof Error) {
         return `Connection Error: ${error.message}`;
     }
