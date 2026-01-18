@@ -338,56 +338,9 @@ export default function App() {
     ));
   };
 
-  // HELPER: Hydrate documents with content if needed
-  const hydrateDocuments = async (docsToHydrate: SourceFile[]) => {
-      const updatedDocs = [...documents];
-      let needsUpdate = false;
-
-      const hydrated = await Promise.all(docsToHydrate.map(async (doc) => {
-          if (doc.content) return doc; // Already has content
-          
-          try {
-              const content = await fetchDocumentContent(doc.id);
-              // Update local cache
-              const idx = updatedDocs.findIndex(d => d.id === doc.id);
-              if (idx !== -1) {
-                  updatedDocs[idx] = { ...updatedDocs[idx], content };
-                  needsUpdate = true;
-              }
-              return { ...doc, content };
-          } catch (e) {
-              console.error(`Failed to hydrate doc ${doc.id}`, e);
-              return doc;
-          }
-      }));
-
-      if (needsUpdate) {
-          setDocuments(updatedDocs);
-      }
-      return hydrated;
-  };
-
   const handleViewDocument = async (doc: SourceFile) => {
-      // Lazy load content if missing
-      if (!doc.content) {
-          setUploading(true); // Reuse uploading spinner for "Loading Doc"
-          try {
-              const content = await fetchDocumentContent(doc.id);
-              const fullDoc = { ...doc, content };
-              
-              // Update state so we don't fetch again
-              setDocuments(prev => prev.map(d => d.id === doc.id ? fullDoc : d));
-              setViewingDoc(fullDoc);
-          } catch (e) {
-              console.error("Error loading document content", e);
-              alert("Could not load document content.");
-          } finally {
-              setUploading(false);
-          }
-      } else {
-          setViewingDoc(doc);
-      }
-
+      // Direct assignment since content is pre-loaded
+      setViewingDoc(doc);
       if(window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
@@ -399,10 +352,8 @@ export default function App() {
     setIsAnalyzing(true);
     setShowOverview(true);
     try {
-      // Ensure content is loaded before sending to AI
-      const hydratedDocs = await hydrateDocuments(updatedDocs);
-      // Filter out any that failed to load content (undefined or empty string safe check)
-      const validDocs = hydratedDocs.filter(d => d.content) as {title: string, content: string}[];
+      // Valid docs check
+      const validDocs = updatedDocs.filter(d => d.content) as {title: string, content: string}[];
       
       const summary = await generateTopicSummary(validDocs);
       setOverviewData(summary);
@@ -420,9 +371,7 @@ export default function App() {
     setIsAnalyzing(true);
     setShowOverview(true);
     try {
-      const hydratedDocs = await hydrateDocuments(selected);
-      const validDocs = hydratedDocs.filter(d => d.content) as {title: string, content: string}[];
-
+      const validDocs = selected.filter(d => d.content) as {title: string, content: string}[];
       const summary = await generateTopicSummary(validDocs);
       setOverviewData(summary);
     } catch (e) {
@@ -458,12 +407,6 @@ export default function App() {
       let sessionId = currentSessionId;
       const selectedDocs = documents.filter(d => d.isSelected);
       
-      // LAZY LOAD: Ensure selected docs have content before processing
-      let docsWithContent: SourceFile[] = [];
-      if (selectedDocs.length > 0) {
-          docsWithContent = await hydrateDocuments(selectedDocs);
-      }
-
       if (!sessionId) {
         const sessionData = await createChatSession(
           textToUse.slice(0, 30) + (textToUse.length > 30 ? "..." : ""), 
@@ -479,11 +422,10 @@ export default function App() {
       await saveChatMessage(sessionId!, userMsg);
 
       let context = "";
-      if (docsWithContent.length > 0) {
-        context = docsWithContent.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+      if (selectedDocs.length > 0) {
+        context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
       } else {
         const embedding = await generateEmbedding(textToUse);
-        // Note: findSimilarDocuments already fetches content internally for the matches
         const similarDocs = await findSimilarDocuments(embedding);
         if (similarDocs && similarDocs.length > 0) {
             context = similarDocs.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
@@ -618,9 +560,6 @@ export default function App() {
                       <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
                         {doc.title}
                       </p>
-                      <span className="text-[10px] text-slate-400">
-                        {doc.pageCount ? `${doc.pageCount} pages` : 'Document'}
-                      </span>
                     </div>
                     <button
                       onClick={(e) => handleDeleteDocument(e, doc.id)}

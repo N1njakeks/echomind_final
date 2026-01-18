@@ -85,7 +85,7 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
       }
   } catch (e) { console.warn("Embedding failed", e); }
 
-  // REVERT: Removed page_count to fix DB error
+  // Excluded page_count to avoid DB error
   const { data, error } = await supabase
     .from('documents')
     .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
@@ -104,10 +104,11 @@ export const fetchUserDocuments = async (userId?: string) => {
       uid = user.id;
   }
 
-  // REVERT: Removed page_count from select to fix "column does not exist" error
+  // REVERT: Added 'content' back to select so it loads immediately.
+  // Removed 'page_count' to fix DB error.
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, type, is_read, created_at')
+    .select('id, title, content, type, is_read, created_at')
     .eq('user_id', uid)
     .order('created_at', { ascending: false });
 
@@ -119,15 +120,15 @@ export const fetchUserDocuments = async (userId?: string) => {
   return data.map((doc: any) => ({
     id: doc.id,
     title: doc.title,
+    content: doc.content, // Content is now populated immediately
     type: doc.type,
     isRead: doc.is_read,
     isSelected: false,
     createdAt: new Date(doc.created_at).getTime(),
-    pageCount: 1 // Default fallback since DB column missing
+    pageCount: 1 // Default fallback
   }));
 };
 
-// Keep Lazy load content (It works and isn't the cause of the error)
 export const fetchDocumentContent = async (id: string): Promise<string> => {
     const { data, error } = await supabase
         .from('documents')
@@ -170,7 +171,6 @@ export const findSimilarDocuments = async (embedding: number[]) => {
     const ids = data.map((d: any) => d.id);
     if (ids.length === 0) return [];
 
-    // REVERT: Removed page_count here too
     const { data: docs } = await supabase
         .from('documents')
         .select('id, title, content, type, created_at') 
@@ -213,7 +213,6 @@ export const fetchChatSessions = async (userId?: string) => {
         uid = user.id;
     }
 
-    // REVERT: Removed .limit(40) - loading all chats again as requested
     const { data } = await supabase
         .from('chat_sessions')
         .select('*') 
