@@ -5,16 +5,19 @@ let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
   if (!aiClient) {
-    // Robustly fetch API key:
-    // 1. process.env.API_KEY (Standard/Vercel System Env)
-    // 2. import.meta.env.VITE_API_KEY (Vite Client Env)
-    // 3. Fallback to the provided free key for immediate usage outside managed envs.
+    // FORCED UPDATE: Prioritizing the specific key requested by the user.
+    // We place the hardcoded key FIRST to override any potentially stale environment variables.
+    const apiKey = 'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk';
+    
+    /* 
+    // Fallback logic (Disabled to ensure new key usage)
     const apiKey = process.env.API_KEY || 
                    (import.meta as any).env?.VITE_API_KEY || 
                    'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk';
+    */
     
     if (!apiKey) {
-      console.warn("API Key not found. Please set VITE_API_KEY or API_KEY in your environment variables.");
+      console.warn("API Key not found.");
     }
 
     aiClient = new GoogleGenAI({ apiKey });
