@@ -22,4 +22,5 @@ export interface ChatSession {
   title: string;
   createdAt: number;
   sourceIds?: string[];
+  mode?: 'standard' | 'reflective';
 }

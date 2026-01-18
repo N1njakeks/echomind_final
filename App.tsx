@@ -25,8 +25,11 @@ import {
   ArrowRight,
   BarChart3,
   Layers,
-  Trash2
+  Trash2,
+  Lock
 } from 'lucide-react';
+
+const MAX_MESSAGES_PER_SESSION = 10;
 
 // --- Knowledge Distribution Component (Replaces PieChart) ---
 const KnowledgeDistribution = ({ data }: { data: { label: string, value: number }[] }) => {
@@ -41,7 +44,6 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
   ];
 
   // Robustness: Calculate total to normalize percentages visually.
-  // This ensures the bar is always full even if LLM math is slightly off (e.g. sums to 95 or 105).
   const totalValue = data.reduce((acc, item) => acc + item.value, 0);
 
   return (
@@ -54,7 +56,6 @@ const KnowledgeDistribution = ({ data }: { data: { label: string, value: number 
         </div>
         <div className="h-6 w-full flex rounded-lg overflow-hidden ring-1 ring-slate-200 shadow-sm bg-slate-100">
           {data.map((item, index) => {
-            // Calculate normalized width
             const widthPercentage = totalValue > 0 ? (item.value / totalValue) * 100 : 0;
             return (
               <div 
@@ -230,7 +231,6 @@ export default function App() {
       setChatSessions(sessions);
     } catch (e: any) {
       console.error("Failed to load data", e);
-      // If we get a refresh token error, sign out to reset state
       if (e.message && (e.message.includes("Refresh Token") || e.message.includes("refresh_token"))) {
         await handleLogout();
       }
@@ -249,7 +249,8 @@ export default function App() {
   const handleNewChat = () => {
     setMessages([]);
     setCurrentSessionId(null);
-    setChatMode('standard');
+    // Do NOT reset chatMode here; let user keep their preference for the NEW session
+    // But once the session starts, it will be locked.
     setIsSidebarOpen(false);
     setShowOverview(false);
     setOverviewData(null);
@@ -261,8 +262,21 @@ export default function App() {
     setShowOverview(false);
     try {
       const msgs = await fetchChatMessages(sessionId);
+      const session = chatSessions.find(s => s.id === sessionId);
+      
       setMessages(msgs);
       setCurrentSessionId(sessionId);
+      
+      // CRITICAL FIX: Source of truth is the messages themselves.
+      // If ANY message in the history has isThinking=true, the session is V2 (Reflective).
+      const hasReflectiveHistory = msgs.some(m => m.isThinking === true);
+      
+      if (hasReflectiveHistory) {
+        setChatMode('reflective');
+      } else {
+        setChatMode('standard');
+      }
+      
     } catch (e) {
       console.error("Failed to load session", e);
     } finally {
@@ -306,7 +320,6 @@ export default function App() {
     try {
       await deleteDocument(id);
       setDocuments(prev => prev.filter(d => d.id !== id));
-      // If we were viewing this document, close the viewer
       if (viewingDoc?.id === id) setViewingDoc(null);
     } catch (err) {
       console.error("Failed to delete document", err);
@@ -320,11 +333,9 @@ export default function App() {
   };
 
   const selectAllAndAnalyze = async () => {
-    // Select all docs in state
     const updatedDocs = documents.map(d => ({ ...d, isSelected: true }));
     setDocuments(updatedDocs);
     
-    // Trigger analysis immediately
     setIsAnalyzing(true);
     setShowOverview(true);
     try {
@@ -357,7 +368,11 @@ export default function App() {
     const textToUse = overrideText || inputText;
     if (!textToUse.trim() || loading) return;
 
-    // Transition from overview to chat if we started from there
+    // CAP: Check message limit (User messages only)
+    const userMsgCount = messages.filter(m => m.role === 'user').length;
+    if (userMsgCount >= MAX_MESSAGES_PER_SESSION) return;
+
+    // Transition from overview to chat
     if (showOverview) setShowOverview(false);
 
     const userMsg: ChatMessage = {
@@ -365,7 +380,6 @@ export default function App() {
       role: 'user',
       text: textToUse,
       timestamp: Date.now(),
-      // NEW: Also mark the user question as V2/Reflective if current mode is reflective
       isThinking: chatMode === 'reflective'
     };
 
@@ -379,9 +393,11 @@ export default function App() {
       const selectedDocs = documents.filter(d => d.isSelected);
       
       if (!sessionId) {
+        // Create new session with the CURRENTLY SELECTED mode
         const sessionData = await createChatSession(
           textToUse.slice(0, 30) + (textToUse.length > 30 ? "..." : ""), 
-          selectedDocs.map(d => d.id)
+          selectedDocs.map(d => d.id),
+          chatMode // Pass the mode to lock it via Title fallback
         );
         sessionId = sessionData.id;
         setCurrentSessionId(sessionId);
@@ -433,6 +449,12 @@ export default function App() {
   const selectedPages = documents.filter(d => d.isSelected).reduce((sum, d) => sum + (d.pageCount || 1), 0);
   const selectedCount = documents.filter(d => d.isSelected).length;
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
+  
+  const isSessionLocked = !!currentSessionId;
+  
+  // Update limit logic to only count user messages
+  const userMessageCount = messages.filter(m => m.role === 'user').length;
+  const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
 
   return (
     <div className="flex h-full bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
@@ -524,12 +546,10 @@ export default function App() {
                       <p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>
                         {doc.title}
                       </p>
-                      {/* Show page count even if undefined (fallback to 1 if we render total logic) */}
                       <span className="text-[10px] text-slate-400">
                         {doc.pageCount ? `${doc.pageCount} pages` : 'Document'}
                       </span>
                     </div>
-                    {/* Delete button: Only visible on hover */}
                     <button
                       onClick={(e) => handleDeleteDocument(e, doc.id)}
                       className="ml-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"
@@ -576,10 +596,21 @@ export default function App() {
                     currentSessionId === session.id ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'
                   }`}
                 >
-                  <MessageSquare className={`w-4 h-4 mr-3 flex-shrink-0 ${currentSessionId === session.id ? 'text-slate-800' : 'text-slate-400'}`} />
-                  <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>
-                    {session.title || "Untitled Session"}
-                  </p>
+                  <div className="mr-3 flex-shrink-0 relative">
+                     <MessageSquare className={`w-4 h-4 ${currentSessionId === session.id ? 'text-slate-800' : 'text-slate-400'}`} />
+                     {session.mode === 'reflective' && (
+                       <div className="absolute -top-1 -right-1 w-2 h-2 bg-indigo-500 rounded-full ring-1 ring-white" title="V2" />
+                     )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>
+                      {session.title || "Untitled Session"}
+                    </p>
+                    {/* Updated to remove 'Reflective' text */}
+                    <p className="text-[10px] text-slate-400 truncate">
+                       {session.mode === 'reflective' ? 'V2' : 'V1'}
+                    </p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -601,25 +632,39 @@ export default function App() {
               <h1 className="font-bold text-slate-800 text-base md:text-lg truncate">
                 {currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Session") : "New Session"}
               </h1>
-              <div className="flex items-center text-[10px] md:text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                <span>{chatMode === 'reflective' ? "• V2 Active" : "• V1 Active"}</span>
+              {/* Tracker and Neutral Labels */}
+              <div className="flex items-center gap-3 text-[10px] md:text-xs text-slate-400 font-semibold uppercase tracking-wider mt-0.5">
+                <span className={chatMode === 'reflective' ? 'text-indigo-500 font-bold' : ''}>
+                   {chatMode === 'reflective' ? "V2" : "V1"}
+                </span>
+                <span className="text-slate-300">|</span>
+                <span className={isLimitReached ? "text-red-500" : ""}>
+                   {userMessageCount} / {MAX_MESSAGES_PER_SESSION}
+                </span>
               </div>
             </div>
           </div>
           
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg scale-90 md:scale-100 origin-right">
+          <div className={`flex items-center space-x-1 bg-slate-100 p-1 rounded-lg scale-90 md:scale-100 origin-right ${isSessionLocked ? 'opacity-70 cursor-not-allowed' : ''}`}>
             <button 
-              onClick={() => setChatMode('standard')}
-              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
+              onClick={() => !isSessionLocked && setChatMode('standard')}
+              disabled={isSessionLocked}
+              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'} ${isSessionLocked ? 'cursor-not-allowed' : ''}`}
             >
               V1
             </button>
             <button 
-              onClick={() => setChatMode('reflective')}
-              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}
+              onClick={() => !isSessionLocked && setChatMode('reflective')}
+              disabled={isSessionLocked}
+              className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'} ${isSessionLocked ? 'cursor-not-allowed' : ''}`}
             >
               V2
             </button>
+            {isSessionLocked && (
+               <div className="pl-1 pr-1 text-slate-400" title="Mode is locked for this session">
+                 <Lock className="w-3 h-3" />
+               </div>
+            )}
           </div>
         </header>
 
@@ -678,7 +723,7 @@ export default function App() {
             </div>
           ) : (
             /* Chat Messages View */
-            <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+            <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-20">
               {messages.length === 0 && (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-300 px-6 text-center">
                   {documents.length > 0 ? (
@@ -727,12 +772,22 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              
               {loading && (
                  <div className="flex w-full justify-start">
                    <div className="bg-white border border-slate-200 p-3 md:p-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center space-x-2">
                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
                      <span className="text-xs text-slate-400">Processing...</span>
                    </div>
+                 </div>
+              )}
+
+              {isLimitReached && (
+                 <div className="flex w-full justify-center mt-6">
+                    <div className="bg-slate-100 border border-slate-200 text-slate-500 text-xs py-2 px-4 rounded-full flex items-center">
+                       <Lock className="w-3 h-3 mr-2" />
+                       Session limit reached. Please start a new session.
+                    </div>
                  </div>
               )}
             </div>
@@ -746,15 +801,15 @@ export default function App() {
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder="Message..."
-                className="w-full pl-4 md:pl-5 pr-12 py-3 md:py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-300 focus:outline-none focus:bg-white transition-all text-sm"
-                disabled={loading}
+                onKeyDown={(e) => e.key === 'Enter' && !isLimitReached && sendMessage()}
+                placeholder={isLimitReached ? "Session limit reached." : "Message..."}
+                className={`w-full pl-4 md:pl-5 pr-12 py-3 md:py-4 border rounded-xl focus:outline-none transition-all text-sm ${isLimitReached ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 border-slate-200 focus:ring-2 focus:ring-slate-300 focus:bg-white'}`}
+                disabled={loading || isLimitReached}
               />
               <button 
                 onClick={() => sendMessage()}
-                disabled={loading || !inputText.trim()}
-                className="absolute right-2 p-2 md:p-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-30 transition-colors"
+                disabled={loading || !inputText.trim() || isLimitReached}
+                className="absolute right-2 p-2 md:p-2.5 bg-slate-800 text-white rounded-lg hover:bg-slate-900 disabled:opacity-30 disabled:hover:bg-slate-800 transition-colors"
               >
                 <Send className="w-4 h-4" />
               </button>

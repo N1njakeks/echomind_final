@@ -187,16 +187,26 @@ export const findSimilarDocuments = async (embedding: number[]) => {
     }));
 };
 
-export const createChatSession = async (title: string, sourceIds: string[]) => {
+export const createChatSession = async (title: string, sourceIds: string[], mode: 'standard' | 'reflective') => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("No user");
     
+    // Fallback path: 'mode' column is missing in DB. Store indicator in title.
+    // This ensures the mode is saved even if the schema isn't updated.
+    let fallbackTitle = title;
+    if (mode === 'reflective') {
+        fallbackTitle = `${title} [V2]`;
+    }
+    
     const { data, error } = await supabase
         .from('chat_sessions')
-        .insert([{ user_id: user.id, title, source_ids: sourceIds }])
+        .insert([{ user_id: user.id, title: fallbackTitle, source_ids: sourceIds }])
         .select().single();
+        
     if (error) throw error;
-    return data;
+    
+    // Return cleaned up object to UI so it looks correct immediately
+    return { ...data, title: title, mode: mode }; 
 };
 
 export const fetchChatSessions = async () => {
@@ -207,7 +217,23 @@ export const fetchChatSessions = async () => {
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
-    return data || [];
+        
+    return (data || []).map((session: any) => {
+        let mode = 'standard';
+        let title = session.title;
+
+        // Backward compatibility / Fallback: Check title for magic tag since column is missing
+        if (title && title.includes('[V2]')) {
+            mode = 'reflective';
+            title = title.replace('[V2]', '').trim();
+        }
+
+        return {
+            ...session,
+            title,
+            mode: mode
+        };
+    });
 };
 
 export const fetchChatMessages = async (sessionId: string) => {
