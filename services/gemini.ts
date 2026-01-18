@@ -1,26 +1,12 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
   if (!aiClient) {
-    // FORCED UPDATE: Prioritizing the specific key requested by the user.
-    // We place the hardcoded key FIRST to override any potentially stale environment variables.
-    const apiKey = 'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk';
-    
-    /* 
-    // Fallback logic (Disabled to ensure new key usage)
-    const apiKey = process.env.API_KEY || 
-                   (import.meta as any).env?.VITE_API_KEY || 
-                   'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk';
-    */
-    
-    if (!apiKey) {
-      console.warn("API Key not found.");
-    }
-
-    aiClient = new GoogleGenAI({ apiKey });
+    // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
+    aiClient = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
   return aiClient;
 };
@@ -164,14 +150,32 @@ export const generateAnswer = async (
       contents: contents,
       config: {
         temperature: 0.7, // Keep chat slightly creative
-        systemInstruction: finalSystemInstruction
+        systemInstruction: finalSystemInstruction,
+        // CRITICAL FIX: Disable safety filters to allow 1:1 recitation of user documents
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ],
       }
     });
 
-    return response.text || "No response generated.";
+    if (response.text) return response.text;
+
+    // Enhanced Error Handling: If text is empty, check finishReason
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason) {
+        console.warn("Gemini Finish Reason:", candidate.finishReason);
+        if (candidate.finishReason !== 'STOP') {
+            return `I couldn't generate a response. The model stopped due to: ${candidate.finishReason}. (Likely safety or recitation check).`;
+        }
+    }
+    
+    return "No response generated (Empty output).";
+
   } catch (error) {
     console.error("Gemini Generation Error:", error);
-    // Return the actual error message in development/testing to help debug
     if (error instanceof Error) {
         return `Connection Error: ${error.message}`;
     }

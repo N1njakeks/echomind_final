@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession } from './services/supabase';
 import { generateAnswer, generateEmbedding, generateTopicSummary } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -261,6 +261,22 @@ export default function App() {
     setIsSidebarOpen(false);
     setShowOverview(false);
     setOverviewData(null);
+  };
+
+  const handleDeleteChat = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this chat session?")) return;
+
+    try {
+      await deleteChatSession(id);
+      setChatSessions(prev => prev.filter(s => s.id !== id));
+      // If the currently active session is deleted, reset the view
+      if (currentSessionId === id) {
+        handleNewChat();
+      }
+    } catch (err) {
+      console.error("Failed to delete chat", err);
+    }
   };
 
   const handleSelectSession = async (sessionId: string) => {
@@ -621,6 +637,13 @@ export default function App() {
                        {session.mode === 'reflective' ? 'V2' : 'V1'}
                     </p>
                   </div>
+                  <button
+                    onClick={(e) => handleDeleteChat(e, session.id)}
+                    className="ml-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete session"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               ))}
             </div>

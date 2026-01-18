@@ -236,6 +236,19 @@ export const fetchChatSessions = async (userId?: string) => {
     });
 };
 
+export const deleteChatSession = async (sessionId: string) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("No user");
+
+  const { error } = await supabase
+    .from('chat_sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+};
+
 export const fetchChatMessages = async (sessionId: string) => {
     const { data, error } = await supabase
         .from('chat_messages')
