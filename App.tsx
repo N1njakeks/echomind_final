@@ -438,13 +438,21 @@ export default function App() {
       await saveChatMessage(sessionId!, userMsg);
 
       let context = "";
+      // Only generate embedding if there are NO specific documents selected,
+      // otherwise we only use the selected docs context.
       if (selectedDocs.length > 0) {
         context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
       } else {
-        const embedding = await generateEmbedding(textToUse);
-        const similarDocs = await findSimilarDocuments(embedding);
-        if (similarDocs && similarDocs.length > 0) {
-            context = similarDocs.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
+        try {
+          // This might fail if API key is invalid, so we wrap it
+          const embedding = await generateEmbedding(textToUse);
+          const similarDocs = await findSimilarDocuments(embedding);
+          if (similarDocs && similarDocs.length > 0) {
+              context = similarDocs.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
+          }
+        } catch (embedError) {
+          console.warn("RAG failed:", embedError);
+          // Proceed without context if RAG fails, but let generateAnswer handle the main error
         }
       }
 
@@ -462,12 +470,12 @@ export default function App() {
       setMessages(prev => [...prev, aiMsg]);
       await saveChatMessage(sessionId!, aiMsg);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'model',
-        text: "Error processing request.",
+        text: `Error processing request: ${err.message || "Unknown error"}`,
         timestamp: Date.now()
       }]);
     } finally {
