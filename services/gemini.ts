@@ -11,7 +11,7 @@ const getClient = () => {
     // 3. Fallback to the provided free key for immediate usage outside managed envs.
     const apiKey = process.env.API_KEY || 
                    (import.meta as any).env?.VITE_API_KEY || 
-                   'AIzaSyCML-V2bg-gisW01G9WBifLUCKBcEBov6c';
+                   'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk';
     
     if (!apiKey) {
       console.warn("API Key not found. Please set VITE_API_KEY or API_KEY in your environment variables.");
