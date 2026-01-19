@@ -20,7 +20,7 @@ const getClient = () => {
       procEnv.VITE_API_KEY || 
       viteEnv.API_KEY || 
       procEnv.API_KEY ||
-      'AIzaSyCi7jWmcr_5FmOrogkcGbdgz5qqzQuX0WA'; // Fallback provided by user
+      'AIzaSyCi7jWmcr_5FmOrogkcGbdgz5qqzQuX0WA'; // Updated fallback provided by user
 
     if (!apiKey) {
       console.error("Gemini API Key is missing. Please set VITE_API_KEY in your Vercel environment variables.");
