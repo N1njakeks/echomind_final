@@ -797,12 +797,6 @@ export default function App() {
                         : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'
                     }`}
                   >
-                    {msg.isThinking && msg.role === 'model' && (
-                      <div className="mb-2 pb-2 border-b border-slate-50 text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center">
-                        <MessageCircle className="w-3 h-3 mr-1" />
-                        V2 Processing
-                      </div>
-                    )}
                     {msg.text}
                   </div>
                 </div>
