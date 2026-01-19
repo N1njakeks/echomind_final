@@ -5,19 +5,25 @@ let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
   if (!aiClient) {
-    // Robust API Key retrieval for browser environments (Vite, etc.)
-    const viteEnv = (import.meta as any).env;
-    
-    // Check various sources for the API key
-    // Priority: VITE_API_KEY -> API_KEY -> process.env.API_KEY -> Fallback
+    // Robust API Key retrieval for browser environments (Vite, Vercel, etc.)
+    // We check both Vite's standard import.meta.env and the Node-style process.env
+    // to ensure the key is found regardless of how the build tool injects it.
+    const viteEnv = (import.meta as any).env || {};
+    const procEnv = typeof process !== 'undefined' ? process.env : {};
+
+    // PRIORITY ORDER:
+    // 1. VITE_API_KEY (Standard for Vite apps on Vercel)
+    // 2. process.env.VITE_API_KEY (Fallback if import.meta is missed by some tools)
+    // 3. API_KEY / process.env.API_KEY (Generic fallbacks)
     const apiKey = 
-      viteEnv?.VITE_API_KEY || 
-      viteEnv?.API_KEY || 
-      (typeof process !== 'undefined' ? process.env?.API_KEY : undefined) ||
+      viteEnv.VITE_API_KEY || 
+      procEnv.VITE_API_KEY || 
+      viteEnv.API_KEY || 
+      procEnv.API_KEY ||
       'AIzaSyCWt4Xj-Vh-eILxdNwbWLHs_aqZADAb-iI'; // Fallback for demo/local dev
 
     if (!apiKey) {
-      console.error("Gemini API Key is missing. Please set VITE_API_KEY in your environment.");
+      console.error("Gemini API Key is missing. Please set VITE_API_KEY in your Vercel environment variables.");
       throw new Error("Gemini API Key is missing");
     }
 
