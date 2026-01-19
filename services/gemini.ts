@@ -9,11 +9,12 @@ const getClient = () => {
     const viteEnv = (import.meta as any).env;
     
     // Check various sources for the API key
+    // Priority: VITE_API_KEY -> API_KEY -> process.env.API_KEY -> Fallback
     const apiKey = 
       viteEnv?.VITE_API_KEY || 
       viteEnv?.API_KEY || 
       (typeof process !== 'undefined' ? process.env?.API_KEY : undefined) ||
-      'AIzaSyDgRMHnr3lZHVIdtHpK64g51hj_CLVVVPk'; // Fallback for demo/local dev
+      'AIzaSyCWt4Xj-Vh-eILxdNwbWLHs_aqZADAb-iI'; // Fallback for demo/local dev
 
     if (!apiKey) {
       console.error("Gemini API Key is missing. Please set VITE_API_KEY in your environment.");
