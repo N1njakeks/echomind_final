@@ -36,31 +36,22 @@ CORE INSTRUCTIONS:
 3. If the answer is NOT in the documents, you may use your general knowledge but clearly state that the information comes from outside the user's library.
 4. Keep responses warm, human, and concise.`;
 
-const SMART_PROMPT = `You are Echomind, a reflective companion that helps learners make sense of what they’ve been reading.
+// OPTIMIZED V2 PROMPT: Less rigid constraints to prevent empty output on Gemini 3 Flash Preview
+const SMART_PROMPT = `You are Echomind, a reflective learning assistant.
 
-CONTEXT & GROUNDING
-You have access to the specific text the user is reading ("Reference Material").
-You MUST use this material to ground your questions. Reference specific concepts, quotes, or arguments from the text to trigger the user's memory.
+OBJECTIVE
+Help the user process information deeply through reflection.
 
-CORE OBJECTIVE
-Guide the user through a complete reflective arc that:
-- grounds in a specific reading moment (quote or concept from the provided text)
-- explores thoughts and emotions
-- evaluates what worked and what didn’t
-- examines deeper meaning
-- distills learning
-- shapes future intent
+INSTRUCTIONS
+1. **Reference Material**: If provided, use it to ground your questions. If NOT provided, ask general reflective questions about the user's thoughts or goals.
+2. **One Question**: Ask exactly one thought-provoking question per turn to guide the conversation.
+3. **Brevity**: Keep responses short (under 4 sentences).
+4. **Tone**: Curious, calm, and encouraging. Use a conversational tone.
 
-CONVERSATION SHAPE
-Aim for ~10 conversational turns in total. 
-Monitor the chat history to see which stage of the reflection you are in.
-Ask one main question per turn.
-
-STYLE GUIDELINES
-- Warm, curious, unhurried
-- Sound like a thoughtful peer, not a tutor
-- Avoid stacking questions; depth over breadth
-- 3–5 sentences per response max`;
+AVOID
+- Long explanations.
+- Answering for the user.
+- Being overly formal.`;
 
 /**
  * Generates vector embedding for text
@@ -137,7 +128,8 @@ export const generateTopicSummary = async (documents: {title: string, content: s
 };
 
 /**
- * Generates an answer using the full chat history for stateful conversation
+ * Generates an answer using the full chat history for stateful conversation.
+ * SINGLE ATTEMPT ONLY (No Retry) for clean evaluation data.
  */
 export const generateAnswer = async (
   context: string, 
@@ -164,9 +156,9 @@ export const generateAnswer = async (
       model: 'gemini-3-flash-preview',
       contents: contents,
       config: {
-        temperature: 0.7, // Keep chat slightly creative
+        temperature: 0.7,
         systemInstruction: finalSystemInstruction,
-        // CRITICAL FIX: Disable safety filters to allow 1:1 recitation of user documents
+        // Disable safety filters to allow 1:1 recitation of user documents
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -176,24 +168,27 @@ export const generateAnswer = async (
       }
     });
 
+    // 1. Standard text getter
     if (response.text) return response.text;
 
-    // Enhanced Error Handling: If text is empty, check finishReason
+    // 2. Deep check for text in candidates if getter failed
+    const candidateText = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (candidateText) return candidateText;
+
+    // 3. Analyze failure reason for evaluation transparency
     const candidate = response.candidates?.[0];
     if (candidate?.finishReason) {
-        console.warn("Gemini Finish Reason:", candidate.finishReason);
-        if (candidate.finishReason !== 'STOP') {
-            return `I couldn't generate a response. The model stopped due to: ${candidate.finishReason}. (Likely safety or recitation check).`;
-        }
+       console.warn("Model Finish Reason:", candidate.finishReason);
+       return `[NO OUTPUT] Model stopped with reason: ${candidate.finishReason}`;
     }
     
-    return "No response generated (Empty output).";
+    return "[NO OUTPUT] Empty response received (Unknown reason).";
 
   } catch (error) {
     console.error("Gemini Generation Error:", error);
     if (error instanceof Error) {
-        return `Connection Error: ${error.message}`;
+        return `[ERROR] ${error.message}`;
     }
-    return "I encountered an error. Please check your connection and API Key.";
+    return "[ERROR] Unknown connection error.";
   }
 };
