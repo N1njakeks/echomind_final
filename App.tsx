@@ -24,7 +24,9 @@ import {
   Trash2,
   Lock,
   Info,
-  ClipboardList
+  ClipboardList,
+  Library,
+  History as HistoryIcon
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
@@ -164,7 +166,7 @@ export default function App() {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'docs' | 'chats'>('docs');
+  // REMOVED: sidebarTab state
   const [chatMode, setChatMode] = useState<'standard' | 'reflective'>('standard');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
@@ -451,7 +453,7 @@ export default function App() {
     <div className="flex h-[100dvh] bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
       {isSidebarOpen && <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-20 md:hidden" onClick={() => setIsSidebarOpen(false)} />}
       <div className={`fixed md:relative inset-y-0 left-0 w-72 md:w-80 bg-white border-r border-slate-200 flex flex-col shadow-xl md:shadow-none z-30 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <h2 className="font-bold text-lg flex items-center text-slate-700"><BrainCircuit className="w-5 h-5 mr-2 text-slate-600" />EchoMind</h2>
           <div className="flex items-center space-x-1">
             <button onClick={() => setShowSettings(true)} className="p-2 text-slate-400 hover:text-slate-600 transition-colors"><Settings className="w-4 h-4" /></button>
@@ -460,84 +462,88 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex border-b border-slate-100">
-          <button onClick={() => setSidebarTab('docs')} className={`flex-1 py-3 text-sm font-medium transition-colors ${sidebarTab === 'docs' ? 'text-slate-800 border-b-2 border-slate-800 bg-slate-50' : 'text-slate-500 hover:text-slate-700'}`}>Knowledge</button>
-          <button onClick={() => setSidebarTab('chats')} className={`flex-1 py-3 text-sm font-medium transition-colors ${sidebarTab === 'chats' ? 'text-slate-800 border-b-2 border-slate-800 bg-slate-50' : 'text-slate-500 hover:text-slate-700'}`}>History</button>
-        </div>
-
-        {sidebarTab === 'docs' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="p-4">
-              <label className="flex items-center justify-center w-full px-4 py-3 bg-slate-50 text-slate-600 rounded-lg border border-slate-200 border-dashed cursor-pointer hover:bg-slate-100 transition-colors">
-                {uploading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <Upload className="w-5 h-5 mr-2" />}
-                <span className="font-medium text-sm">{uploading ? 'Processing' : 'Add Content'}</span>
-                <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
-              </label>
+        {/* --- SPLIT SIDEBAR CONTENT --- */}
+        
+        {/* Top Half: Knowledge Base */}
+        <div className="flex-1 flex flex-col min-h-0 border-b border-slate-100 relative">
+            <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
+                 <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    <Library className="w-3.5 h-3.5 mr-1.5" /> Knowledge
+                 </div>
+                 <label className="cursor-pointer p-1 hover:bg-slate-200 rounded text-slate-400 transition-colors" title="Upload">
+                    {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                    <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
+                 </label>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-4">
+            
+            <div className="flex-1 overflow-y-auto px-2 py-2">
               {documents.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-40 text-slate-400 px-4 text-center"><FileText className="w-8 h-8 mb-2 opacity-50" /><span className="text-xs">No documents yet.</span></div>
+                <div className="flex flex-col items-center justify-center h-20 text-slate-400 px-4 text-center"><span className="text-xs">No documents. Add some!</span></div>
               ) : documents.map(doc => (
-                <div key={doc.id} className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer ${doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'} border`} onClick={() => handleViewDocument(doc)}>
-                  <button className="mr-3 text-slate-400" onClick={(e) => { e.stopPropagation(); toggleDocumentSelection(doc.id); }}>
-                    {doc.isSelected ? <CheckSquare className="w-5 h-5 text-slate-800" /> : <Square className="w-5 h-5" />}
+                <div key={doc.id} className={`group flex items-center p-2 mb-1 rounded-md transition-all cursor-pointer ${doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'} border`} onClick={() => handleViewDocument(doc)}>
+                  <button className="mr-3 text-slate-400 shrink-0" onClick={(e) => { e.stopPropagation(); toggleDocumentSelection(doc.id); }}>
+                    {doc.isSelected ? <CheckSquare className="w-4 h-4 text-slate-800" /> : <Square className="w-4 h-4" />}
                   </button>
-                  <div className="flex-1 min-w-0"><p className={`text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p></div>
-                  <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
+                  <div className="flex-1 min-w-0"><p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p></div>
+                  <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               ))}
             </div>
+            
+            {/* Analyze Button - Always visible if docs selected */}
             {documents.some(d => d.isSelected) && (
-              <div className="p-4 border-t border-slate-100">
+              <div className="p-3 border-t border-slate-100 shrink-0 bg-white z-10">
                 <button 
                   onClick={startAnalysis} 
                   disabled={sessionLimitReached}
-                  className={`w-full py-3 rounded-lg flex items-center justify-center text-sm font-bold shadow-lg transition-all ${sessionLimitReached ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
+                  className={`w-full py-2 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm transition-all ${sessionLimitReached ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
                 >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  {sessionLimitReached ? 'Limit reached' : 'Analyze & Start Session'}
+                  <Sparkles className="w-3.5 h-3.5 mr-2" />
+                  {sessionLimitReached ? 'Limit reached (Max 2 Sessions)' : 'Analyze & Start Session'}
                 </button>
               </div>
             )}
-          </div>
-        )}
+        </div>
 
-        {sidebarTab === 'chats' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="p-4">
-              <button 
-                onClick={handleNewChat}
-                disabled={sessionLimitReached}
-                className={`flex items-center justify-center w-full px-4 py-3 rounded-lg border transition-all shadow-sm ${sessionLimitReached ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed opacity-50' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
-              >
-                <Plus className="w-5 h-5 mr-2" />
-                <span className="font-medium text-sm">{sessionLimitReached ? 'Limit reached' : 'New Session'}</span>
-              </button>
-              
-              <div className="mt-4 p-3 bg-amber-50 border border-amber-100 rounded-lg flex items-start gap-2">
-                 <Info className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                 <p className="text-[10px] text-amber-700 leading-tight">
-                    <strong>Study mode:</strong> Create exactly one V1 and one V2 chat.
-                 </p>
-              </div>
+        {/* Bottom Half: History */}
+        <div className="flex-1 flex flex-col min-h-0 bg-slate-50/30">
+            <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
+                 <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    <HistoryIcon className="w-3.5 h-3.5 mr-1.5" /> History
+                 </div>
+                 <button 
+                    onClick={handleNewChat}
+                    disabled={sessionLimitReached}
+                    className={`p-1 rounded text-slate-400 transition-colors ${sessionLimitReached ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer'}`}
+                    title="New Session"
+                 >
+                    <Plus className="w-3.5 h-3.5" />
+                 </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 pb-4">
+            
+            <div className="flex-1 overflow-y-auto px-2 py-2">
+              {chatSessions.length === 0 && (
+                 <div className="flex flex-col items-center justify-center h-20 text-slate-400 px-4 text-center">
+                    <span className="text-xs">No sessions yet.</span>
+                    <span className="text-[10px] mt-1 text-amber-500">Create 1x V1 & 1x V2</span>
+                 </div>
+              )}
               {chatSessions.map(session => (
-                <div key={session.id} onClick={() => handleSelectSession(session.id)} className={`group flex items-center p-3 mb-1 rounded-md transition-all cursor-pointer border ${currentSessionId === session.id ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'}`}>
+                <div key={session.id} onClick={() => handleSelectSession(session.id)} className={`group flex items-center p-2 mb-1 rounded-md transition-all cursor-pointer border ${currentSessionId === session.id ? 'bg-white border-slate-200 shadow-sm' : 'hover:bg-white/50 border-transparent'}`}>
                   <div className="mr-3 flex-shrink-0 relative">
                      <MessageSquare className={`w-4 h-4 ${currentSessionId === session.id ? 'text-slate-800' : 'text-slate-400'}`} />
                      {session.mode === 'reflective' && <div className="absolute -top-1 -right-1 w-2 h-2 bg-indigo-500 rounded-full ring-1 ring-white" title="V2" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>{session.title || "Untitled"}</p>
+                    <p className={`text-xs md:text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>{session.title || "Untitled"}</p>
                     <p className="text-[10px] text-slate-400 uppercase tracking-widest">{session.mode === 'reflective' ? 'V2' : 'V1'}</p>
                   </div>
-                  <button onClick={(e) => handleDeleteChat(e, session.id)} className="ml-2 p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
+                  <button onClick={(e) => handleDeleteChat(e, session.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+        </div>
+
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
