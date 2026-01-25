@@ -5,6 +5,7 @@ import { submitQuestionnaire } from '../services/supabase';
 interface QuestionnaireModalProps {
   type: 'pre' | 'post';
   onClose: () => void;
+  onComplete: () => void;
 }
 
 const LikertScale = ({ 
@@ -54,7 +55,7 @@ const SectionHeader = ({ title, subtitle }: { title: string, subtitle?: string }
   </div>
 );
 
-const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }) => {
+const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose, onComplete }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -78,7 +79,7 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
     // For 'Post', check if comparison is made
     if (type === 'post') {
         if (!formData.comp_preferred_response) {
-            setError("Please select which response was more suitable.");
+            setError("Please select which session was more suitable.");
             return;
         }
     }
@@ -89,6 +90,7 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
       await submitQuestionnaire(formData);
       setSuccess(true);
       setTimeout(() => {
+        onComplete();
         onClose();
       }, 2000);
     } catch (err: any) {
@@ -124,7 +126,7 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
               <HelpCircle className="w-5 h-5 text-indigo-500" />
               {type === 'pre' ? 'Pre-Study Questionnaire' : 'Post-Study Evaluation'}
             </h2>
-            <p className="text-xs text-slate-400 mt-1">Research Study: Standard vs. Reflective AI</p>
+            <p className="text-xs text-slate-400 mt-1">Research Study</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600">
             <X className="w-5 h-5" />
@@ -230,26 +232,18 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
 
           {type === 'post' && (
             <>
-              <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl mb-6">
-                <h4 className="font-bold text-indigo-900 text-sm mb-1">Context Reference</h4>
-                <p className="text-xs text-indigo-700">
-                  <strong>Response A</strong> = V1 (Standard Chat Mode)<br/>
-                  <strong>Response B</strong> = V2 (Reflective Chat Mode)
-                </p>
-              </div>
-
               <div>
                 <SectionHeader title="B1. Overall Comparison" />
                 <div className="mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
-                    <p className="mb-3 text-sm font-semibold text-slate-800">Which response was overall more suitable for the reflection task?</p>
+                    <p className="mb-3 text-sm font-semibold text-slate-800">Which session was overall more suitable for the task?</p>
                     <div className="flex gap-4">
                         <label className={`flex-1 p-3 border rounded-lg cursor-pointer transition-all ${formData.comp_preferred_response === 'A' ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500' : 'bg-white hover:bg-slate-50'}`}>
                             <input type="radio" name="pref" className="hidden" onChange={() => handleChange('comp_preferred_response', 'A')} />
-                            <span className="block text-center font-bold text-slate-700">Response A (V1)</span>
+                            <span className="block text-center font-bold text-slate-700">V1</span>
                         </label>
                         <label className={`flex-1 p-3 border rounded-lg cursor-pointer transition-all ${formData.comp_preferred_response === 'B' ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500' : 'bg-white hover:bg-slate-50'}`}>
                             <input type="radio" name="pref" className="hidden" onChange={() => handleChange('comp_preferred_response', 'B')} />
-                            <span className="block text-center font-bold text-slate-700">Response B (V2)</span>
+                            <span className="block text-center font-bold text-slate-700">V2</span>
                         </label>
                     </div>
                 </div>
@@ -261,11 +255,9 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
                   rightLabel="Very large difference" 
                 />
               </div>
-
-              {/* Tabs for Evaluation could be here, but simpler to just list them for scroll */}
               
               <div className="border-t border-slate-100 pt-8">
-                <SectionHeader title="Evaluation of Response A (V1)" subtitle="Standard Mode" />
+                <SectionHeader title="Evaluation of V1" />
                 
                 <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Readability & Info</h4>
                 <LikertScale label="Easy to read and understand" value={formData.a_readability} onChange={(v) => handleChange('a_readability', v)} />
@@ -281,7 +273,7 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
               </div>
 
               <div className="border-t border-slate-100 pt-8">
-                <SectionHeader title="Evaluation of Response B (V2)" subtitle="Reflective Mode" />
+                <SectionHeader title="Evaluation of V2" />
                 
                 <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Readability & Info</h4>
                 <LikertScale label="Easy to read and understand" value={formData.b_readability} onChange={(v) => handleChange('b_readability', v)} />
@@ -298,7 +290,7 @@ const QuestionnaireModal: React.FC<QuestionnaireModalProps> = ({ type, onClose }
 
               <div className="border-t border-slate-100 pt-8">
                 <SectionHeader title="Open Feedback" />
-                <label className="block text-sm font-medium text-slate-700 mb-2">What did you particularly like about the better response, and why?</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">What did you particularly like about the better session, and why?</label>
                 <textarea 
                    className="w-full p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none h-32 text-sm"
                    placeholder="Your thoughts..."

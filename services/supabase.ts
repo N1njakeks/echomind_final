@@ -320,3 +320,20 @@ export const submitQuestionnaire = async (data: any) => {
 
   if (error) throw error;
 };
+
+export const getQuestionnaireStatus = async () => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { pre: false, post: false };
+
+  const { data, error } = await supabase
+    .from('questionnaire_responses')
+    .select('pre_age, comp_preferred_response')
+    .eq('user_id', user.id);
+
+  if (error || !data) return { pre: false, post: false };
+
+  const hasPre = data.some(row => row.pre_age !== null);
+  const hasPost = data.some(row => row.comp_preferred_response !== null);
+
+  return { pre: hasPre, post: hasPost };
+};

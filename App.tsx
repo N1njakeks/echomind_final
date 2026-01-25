@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus } from './services/supabase';
 import { generateAnswer, generateEmbedding, generateTopicSummary, generateDocumentSummary } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -176,6 +176,7 @@ export default function App() {
   
   // NEW: Questionnaire State
   const [questionnaireType, setQuestionnaireType] = useState<'pre' | 'post' | null>(null);
+  const [surveyStatus, setSurveyStatus] = useState({ pre: false, post: false });
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -188,7 +189,15 @@ export default function App() {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
-      if (session) await loadData(session.user.id);
+      if (session) {
+        await loadData(session.user.id);
+        // Check Questionnaire Status
+        const status = await getQuestionnaireStatus();
+        setSurveyStatus(status);
+        if (!status.pre) {
+          setQuestionnaireType('pre');
+        }
+      }
       setIsAppLoading(false);
     };
     init();
@@ -199,9 +208,16 @@ export default function App() {
         setMessages([]);
         setChatSessions([]);
         setCurrentSessionId(null);
+        setSurveyStatus({ pre: false, post: false });
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         setSession(session);
-        if (session) loadData(session.user.id);
+        if (session) {
+            loadData(session.user.id);
+            getQuestionnaireStatus().then(status => {
+                setSurveyStatus(status);
+                if(!status.pre) setQuestionnaireType('pre');
+            });
+        }
       }
     });
     return () => subscription.unsubscribe();
@@ -376,7 +392,8 @@ export default function App() {
     if (showOverview) setShowOverview(false);
 
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: textToUse, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
-    setMessages(prev => [...prev, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInputText('');
     setLoading(true);
 
@@ -387,15 +404,37 @@ export default function App() {
         ? selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n")
         : (await findSimilarDocuments(await generateEmbedding(textToUse))).map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
 
-      const aiResponseText = await generateAnswer(context, [...messages, userMsg].map(m => ({ role: m.role, text: m.text })), chatMode);
+      const aiResponseText = await generateAnswer(context, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
       const aiMsg: ChatMessage = { id: crypto.randomUUID(), role: 'model', text: aiResponseText, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
       
       setMessages(prev => [...prev, aiMsg]);
       await saveChatMessage(currentSessionId, aiMsg);
+
+      // --- STUDY TRIGGER LOGIC ---
+      // Check if this new message pushes us to the limit (10 user messages)
+      const updatedUserCount = newMessages.filter(m => m.role === 'user').length;
+      if (updatedUserCount >= MAX_MESSAGES_PER_SESSION) {
+         // Check if we now have both sessions full (simplification: if both exist)
+         if (hasV1 && hasV2) {
+             // We are likely finishing the second session now.
+             if (!surveyStatus.post) {
+                 setTimeout(() => {
+                     setQuestionnaireType('post');
+                 }, 1500); // Small delay for user to read AI response first
+             }
+         }
+      }
+
     } catch (err) {
       console.error(err);
       setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: "Request error.", timestamp: Date.now() }]);
     } finally { setLoading(false); }
+  };
+
+  const updateSurveyStatus = async () => {
+      const status = await getQuestionnaireStatus();
+      setSurveyStatus(status);
+      setQuestionnaireType(null);
   };
 
   if (isAppLoading) return <InitialLoader />;
@@ -481,22 +520,6 @@ export default function App() {
                     <strong>Study mode:</strong> Create exactly one V1 and one V2 chat.
                  </p>
               </div>
-
-               {/* TRIGGER BUTTONS FOR STUDY */}
-               <div className="mt-2 grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={() => setQuestionnaireType('pre')}
-                    className="flex items-center justify-center py-2 px-2 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 font-medium"
-                  >
-                    <ClipboardList className="w-3 h-3 mr-1" /> Pre-Q
-                  </button>
-                  <button 
-                    onClick={() => setQuestionnaireType('post')}
-                    className="flex items-center justify-center py-2 px-2 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 font-medium"
-                  >
-                    <ClipboardList className="w-3 h-3 mr-1" /> Post-Q
-                  </button>
-               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-4">
               {chatSessions.map(session => (
@@ -531,11 +554,26 @@ export default function App() {
             </div>
           </div>
           
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg scale-90 md:scale-100 origin-right opacity-70">
-            <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V1</button>
-            <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V2</button>
-            <div className="pl-1 pr-1 text-slate-400" title="Mode locked">
-               <Lock className="w-3 h-3" />
+          <div className="flex items-center space-x-1">
+             {/* STUDY BUTTONS */}
+             <div className="flex mr-2 gap-1">
+                <button 
+                  onClick={() => setQuestionnaireType('pre')}
+                  className={`flex items-center justify-center py-1.5 px-3 text-[10px] md:text-xs rounded font-bold transition-all ${surveyStatus.pre ? 'bg-green-100 text-green-700' : 'bg-slate-800 text-white'}`}
+                >
+                  {surveyStatus.pre ? <CheckSquare className="w-3 h-3 mr-1"/> : <ClipboardList className="w-3 h-3 mr-1" />} Pre
+                </button>
+                <button 
+                  onClick={() => setQuestionnaireType('post')}
+                  className={`flex items-center justify-center py-1.5 px-3 text-[10px] md:text-xs rounded font-bold transition-all ${surveyStatus.post ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white'}`}
+                >
+                   {surveyStatus.post ? <CheckSquare className="w-3 h-3 mr-1"/> : <ClipboardList className="w-3 h-3 mr-1" />} Post
+                </button>
+             </div>
+
+            <div className="hidden md:flex items-center space-x-1 bg-slate-100 p-1 rounded-lg opacity-70">
+                <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V1</button>
+                <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V2</button>
             </div>
           </div>
         </header>
@@ -597,6 +635,7 @@ export default function App() {
         <QuestionnaireModal 
           type={questionnaireType} 
           onClose={() => setQuestionnaireType(null)} 
+          onComplete={updateSurveyStatus}
         />
       )}
 
