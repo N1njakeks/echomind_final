@@ -2,6 +2,7 @@ export interface SourceFile {
   id: string;
   title: string;
   content?: string; // Changed to optional for lazy loading
+  summary?: string; // New field for pre-computed summaries
   type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video';
   isRead: boolean;
   isSelected: boolean;

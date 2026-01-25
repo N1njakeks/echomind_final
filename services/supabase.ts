@@ -79,21 +79,44 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
   if (!user) throw new Error("User not authenticated");
 
   let embedding = null;
+  // REMOVED: Summary generation logic
+
   try {
+      // 1. Generate Embedding only
       if (content.length > 50) {
           embedding = await generateEmbedding(content);
       }
-  } catch (e) { console.warn("Embedding failed", e); }
+  } catch (e) { console.warn("AI Processing failed", e); }
 
-  // Excluded page_count to avoid DB error
   const { data, error } = await supabase
     .from('documents')
-    .insert([{ user_id: user.id, title, content, type, embedding, is_read: false }])
+    .insert([{ 
+        user_id: user.id, 
+        title, 
+        content, 
+        type, 
+        embedding, 
+        // summary: "", // Removed summary field from insert
+        is_read: false 
+    }])
     .select()
     .single();
 
   if (error) throw error;
   return data;
+};
+
+// NEW: Update document summary specifically
+export const updateDocumentSummary = async (docId: string, summary: string) => {
+  const { error } = await supabase
+    .from('documents')
+    .update({ summary: summary })
+    .eq('id', docId);
+
+  if (error) {
+    console.error("Error updating summary:", error);
+    throw error;
+  }
 };
 
 export const fetchUserDocuments = async (userId?: string) => {
@@ -105,10 +128,10 @@ export const fetchUserDocuments = async (userId?: string) => {
   }
 
   // REVERT: Added 'content' back to select so it loads immediately.
-  // Removed 'page_count' to fix DB error.
+  // Added 'summary' to select (can keep fetching it, just won't use it much)
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, content, type, is_read, created_at')
+    .select('id, title, content, summary, type, is_read, created_at')
     .eq('user_id', uid)
     .order('created_at', { ascending: false });
 
@@ -120,7 +143,8 @@ export const fetchUserDocuments = async (userId?: string) => {
   return data.map((doc: any) => ({
     id: doc.id,
     title: doc.title,
-    content: doc.content, // Content is now populated immediately
+    content: doc.content, 
+    summary: doc.summary, 
     type: doc.type,
     isRead: doc.is_read,
     isSelected: false,
@@ -278,4 +302,21 @@ export const saveChatMessage = async (sessionId: string, message: any) => {
         text: message.text,
         is_thinking: message.isThinking || false 
     }]);
+};
+
+// --- Questionnaire ---
+export const submitQuestionnaire = async (data: any) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("No user");
+
+  const payload = {
+    ...data,
+    user_id: user.id,
+  };
+
+  const { error } = await supabase
+    .from('questionnaire_responses')
+    .insert([payload]);
+
+  if (error) throw error;
 };

@@ -105,14 +105,48 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 /**
+ * Generates a concise summary for a single document to be stored in DB.
+ * Kept for reference, but currently unused in main flow.
+ */
+export const generateDocumentSummary = async (title: string, content: string): Promise<string> => {
+  const ai = getClient();
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `
+        Analyze the following document and provide a dense, information-rich summary.
+        Title: ${title}
+        Content: ${content.slice(0, 50000)} (truncated if too long)
+        
+        Requirements:
+        1. Maximum 500 characters.
+        2. Focus on main themes, key arguments, and specific entities.
+        3. Do not use phrases like "This document discusses". go straight to the point.
+      `,
+      config: {
+        maxOutputTokens: 200,
+        temperature: 0.3
+      }
+    });
+    return response.text || "";
+  } catch (e) {
+    console.warn("Summary generation failed", e);
+    return "";
+  }
+};
+
+/**
  * Analyzes documents to create a topic distribution for the summary chart.
  * Uses a deterministic classification approach for robust stats.
  */
-export const generateTopicSummary = async (documents: {title: string, content: string}[]): Promise<{label: string, value: number}[]> => {
+export const generateTopicSummary = async (documents: {title: string, content: string, summary?: string}[]): Promise<{label: string, value: number}[]> => {
   const ai = getClient();
   
-  // Create a structured list for the LLM to count
-  const docList = documents.map((d, i) => `Doc ${i+1} Title: ${d.title}\nSnippet: ${d.content.slice(0, 500)}...`).join('\n\n');
+  // REVERTED: Use pure content slice (first 500 chars) instead of AI summary
+  const docList = documents.map((d, i) => {
+    const textSnippet = d.content.slice(0, 500);
+    return `Doc ${i+1} Title: ${d.title}\nContent Digest: ${textSnippet}...`;
+  }).join('\n\n');
 
   const prompt = `
   You are a data analyst. I have ${documents.length} documents.
