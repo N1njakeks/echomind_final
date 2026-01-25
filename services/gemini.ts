@@ -5,27 +5,17 @@ let aiClient: GoogleGenAI | null = null;
 
 const getClient = () => {
   if (!aiClient) {
-    // Robust API Key retrieval for browser environments (Vite, Vercel, etc.)
-    // We check both Vite's standard import.meta.env and the Node-style process.env
-    // to ensure the key is found regardless of how the build tool injects it.
-    const viteEnv = (import.meta as any).env || {};
-    const procEnv = typeof process !== 'undefined' ? process.env : {};
-
-    // PRIORITY ORDER:
-    // 1. VITE_GEMINI_API_KEY (Specific request)
-    // 2. VITE_API_KEY (Standard for Vite apps on Vercel)
-    // 3. API_KEY / process.env.API_KEY (Generic fallbacks)
-    const apiKey = 
-      viteEnv.VITE_GEMINI_API_KEY || 
-      procEnv.VITE_GEMINI_API_KEY || 
-      viteEnv.VITE_API_KEY || 
-      procEnv.VITE_API_KEY || 
-      viteEnv.API_KEY || 
-      procEnv.API_KEY;
+    // Strictly access the VITE_GEMINI_API_KEY via Vite's import.meta.env
+    // This removes any fallbacks to process.env or other variable names to ensure
+    // we are only using the specific key configured in Vercel.
+    const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your Vercel environment variables.");
-      throw new Error("Gemini API Key is missing");
+      console.error("Configuration Error: VITE_GEMINI_API_KEY is missing.");
+      // Debugging aid: Log available keys (excluding values) to help identify if VITE_ prefix is missing
+      console.log("Available Environment Keys:", Object.keys((import.meta as any).env).filter(k => k.startsWith('VITE_')));
+      
+      throw new Error("VITE_GEMINI_API_KEY is missing. Please check your Vercel Environment Variables.");
     }
 
     aiClient = new GoogleGenAI({ apiKey });
