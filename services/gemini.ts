@@ -12,18 +12,19 @@ const getClient = () => {
     const procEnv = typeof process !== 'undefined' ? process.env : {};
 
     // PRIORITY ORDER:
-    // 1. VITE_API_KEY (Standard for Vite apps on Vercel)
-    // 2. process.env.VITE_API_KEY (Fallback if import.meta is missed by some tools)
+    // 1. VITE_GEMINI_API_KEY (Specific request)
+    // 2. VITE_API_KEY (Standard for Vite apps on Vercel)
     // 3. API_KEY / process.env.API_KEY (Generic fallbacks)
     const apiKey = 
+      viteEnv.VITE_GEMINI_API_KEY || 
+      procEnv.VITE_GEMINI_API_KEY || 
       viteEnv.VITE_API_KEY || 
       procEnv.VITE_API_KEY || 
       viteEnv.API_KEY || 
-      procEnv.API_KEY ||
-      'AIzaSyCi7jWmcr_5FmOrogkcGbdgz5qqzQuX0WA'; // Updated fallback provided by user
+      procEnv.API_KEY;
 
     if (!apiKey) {
-      console.error("Gemini API Key is missing. Please set VITE_API_KEY in your Vercel environment variables.");
+      console.error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your Vercel environment variables.");
       throw new Error("Gemini API Key is missing");
     }
 
