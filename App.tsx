@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus } from './services/supabase';
+import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus, fetchApiKey, storeUserProvidedApiKey } from './services/supabase';
 import { generateAnswer, generateEmbedding, setGeminiApiKey } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
-import ChromeExtensionSettings from './components/ChromeExtensionSettings';
+import SettingsModal from './components/SettingsModal';
 import QuestionnaireModal from './components/QuestionnaireModal';
 import ApiKeyModal from './components/ApiKeyModal';
 import { 
@@ -201,9 +201,20 @@ export default function App() {
     let uid = userId || (await supabase.auth.getSession()).data.session?.user.id;
     if (!uid) return;
     try {
-      const [docs, sessions] = await Promise.all([fetchUserDocuments(uid), fetchChatSessions(uid)]);
+      const [docs, sessions, apiKeyData] = await Promise.all([
+          fetchUserDocuments(uid), 
+          fetchChatSessions(uid),
+          fetchApiKey('google_gemini')
+      ]);
       setDocuments(docs);
       setChatSessions(sessions);
+      
+      // Auto-load key if exists
+      if (apiKeyData?.key) {
+          setGeminiApiKey(apiKeyData.key);
+          setUserApiKey(apiKeyData.key);
+      }
+
     } catch (e: any) {
       console.error("Failed to load data", e);
       if (e.message?.includes("refresh_token")) await handleLogout();
@@ -218,6 +229,7 @@ export default function App() {
     setChatSessions([]);
     setCurrentSessionId(null);
     setUserApiKey(null);
+    setGeminiApiKey(""); // Clear internal state
   };
 
   const handleNewChat = () => {
@@ -252,17 +264,9 @@ export default function App() {
     setLoading(true);
     setIsSidebarOpen(false);
     
-    // Check for API key before accessing old sessions too, if needed?
-    // For now, we assume user might need to re-enter key if they refresh.
     if (!userApiKey) {
-        // If we want to force key on old sessions too:
-        // setShowApiKeyModal(true);
-        // But let's assume the Start Flow handles the initial key entry.
-        // If they click an old session without a key, they might get an error on send.
-        // We'll prompt them when they try to send if key is missing (implicit in handleSend).
-        // For better UX, let's just prompt now if missing.
         setShowApiKeyModal(true);
-        // We continue to load UI, but they can't send until key is in.
+        // We continue to try loading the UI, but send will be blocked
     }
 
     try {
@@ -291,7 +295,11 @@ export default function App() {
         pageCount = pdfData.pageCount;
       } else content = await file.text();
       await saveDocumentToCloud(file.name, content, type, pageCount);
-      if (session?.user?.id) await loadData(session.user.id);
+      if (session?.user?.id) {
+          // Refresh docs only
+          const docs = await fetchUserDocuments(session.user.id);
+          setDocuments(docs);
+      }
     } catch (err) { console.error("Upload failed", err); }
     finally { setUploading(false); e.target.value = ''; }
   };
@@ -323,11 +331,7 @@ export default function App() {
         return;
     }
 
-    // 2. Check Docs
-    const selectedFiles = documents.filter(d => d.isSelected);
-    // Note: We allow starting without docs if they want generic chat, but typically we want docs.
-    // If you want to enforce docs:
-    /* if (selectedFiles.length === 0) { alert("Please select at least one document from the Knowledge Base."); return; } */
+    // 2. Check Docs (Optional check currently disabled to allow general chat)
 
     // 3. Check Pre-Survey
     if (!surveyStatus.pre) {
@@ -342,6 +346,7 @@ export default function App() {
     }
 
     // 5. Create Session
+    const selectedFiles = documents.filter(d => d.isSelected);
     initiateNewStudySession(selectedFiles);
   };
 
@@ -372,30 +377,46 @@ export default function App() {
     }
   };
 
-  // Called when Pre-Questionnaire finishes
   const handleSurveyComplete = async () => {
       await updateSurveyStatus();
       setQuestionnaireType(null);
-      // Immediately Prompt for API Key after Pre-Survey
+      // Immediately Prompt for API Key after Pre-Survey if not already set
       if (!userApiKey) {
           setShowApiKeyModal(true);
       }
   };
 
-  const handleApiKeySubmit = (key: string) => {
+  const handleApiKeySubmit = async (key: string) => {
+      // 1. Set state immediately for UI response
       setGeminiApiKey(key);
       setUserApiKey(key);
       setShowApiKeyModal(false);
       
-      // If we were trying to start a session, retry now
-      // Logic: If we are not in a session, and have selected docs, we likely clicked start.
-      // Or we can just let them click start again. 
-      // Better UX: If no current session, trigger the start logic.
-      if (!currentSessionId) {
-           const selectedFiles = documents.filter(d => d.isSelected);
-           if (sessionLimitReached) return;
-           initiateNewStudySession(selectedFiles);
+      // 2. Persist to Supabase
+      try {
+          await storeUserProvidedApiKey('google_gemini', key);
+      } catch (err) {
+          console.error("Failed to save API key to cloud", err);
+          // We don't block the user, as it works in memory
       }
+      
+      // 3. If we were trying to start a session, retry now
+      if (!currentSessionId && !sessionLimitReached) {
+           const selectedFiles = documents.filter(d => d.isSelected);
+           // Only auto-start if we are on the new session screen. 
+           // Simplest heuristic: check if we are not in a session.
+           if (messages.length === 0) {
+               // Optional: Check if user actually clicked start before? 
+               // For now, let's assume if they just finished the flow, they want to start.
+               initiateNewStudySession(selectedFiles);
+           }
+      }
+  };
+  
+  // New handler for Settings Modal
+  const handleSettingsKeyUpdate = (key: string) => {
+      setGeminiApiKey(key);
+      setUserApiKey(key);
   };
 
   const updateSurveyStatus = async () => {
@@ -426,18 +447,10 @@ export default function App() {
       await saveChatMessage(currentSessionId, userMsg);
       const selectedDocs = documents.filter(d => d.isSelected);
       
-      // We only use selected docs for context if they are explicitly selected in the sidebar
-      // Otherwise we fall back to RAG if no selection? 
-      // For this study, let's assume the session is bound to the IDs saved in DB, 
-      // OR we just use whatever is currently checked in the sidebar as "Active Context".
-      // Let's stick to sidebar selection as "Active Context".
-      
       let context = "";
       if (selectedDocs.length > 0) {
           context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
       } else {
-         // Fallback RAG if nothing selected? Or just chat?
-         // Let's do simple RAG if nothing selected, using embedding
          const similar = await findSimilarDocuments(await generateEmbedding(textToUse));
          context = similar.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
       }
@@ -667,7 +680,17 @@ export default function App() {
         )}
       </div>
 
-      {showSettings && <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowSettings(false)}><div onClick={e => e.stopPropagation()}><ChromeExtensionSettings /></div></div>}
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+           <div onClick={e => e.stopPropagation()}>
+                <SettingsModal 
+                    onClose={() => setShowSettings(false)} 
+                    onApiKeyUpdate={handleSettingsKeyUpdate} 
+                />
+           </div>
+        </div>
+      )}
       
       {/* Questionnaire Modal */}
       {questionnaireType && (

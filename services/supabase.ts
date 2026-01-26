@@ -33,7 +33,7 @@ export const signOut = async () => {
   await supabase.auth.signOut();
 };
 
-// --- API Keys (Chrome Extension) ---
+// --- API Keys (Chrome Extension & Google Gemini) ---
 export const fetchApiKey = async (label: string) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
@@ -48,12 +48,13 @@ export const fetchApiKey = async (label: string) => {
     .maybeSingle();
 
   if (error) {
-    console.error("Error fetching API key:", error);
+    console.error(`Error fetching API key (${label}):`, error);
     return null;
   }
   return data;
 };
 
+// For generating internal Chrome Extension keys
 export const createApiKey = async (label: string) => {
   const uuid = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
   const key = `sk_app_${uuid.replace(/-/g, '')}`;
@@ -66,6 +67,32 @@ export const createApiKey = async (label: string) => {
   const { data, error } = await supabase
     .from('api_keys')
     .insert([{ key, label }]) 
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
+// NEW: For storing external User Provided Keys (like Gemini)
+export const storeUserProvidedApiKey = async (label: string, keyValue: string) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("No user authenticated");
+
+  // Remove old key of this type to keep it clean (1:1 relationship per label)
+  await supabase
+    .from('api_keys')
+    .delete()
+    .eq('label', label)
+    .eq('user_id', user.id);
+
+  const { data, error } = await supabase
+    .from('api_keys')
+    .insert([{ 
+        user_id: user.id, 
+        label: label, 
+        key: keyValue 
+    }])
     .select()
     .single();
 
