@@ -1,21 +1,22 @@
-import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
+let userProvidedKey: string | null = null;
+
+// Allow the app to set the key dynamically at runtime
+export const setGeminiApiKey = (key: string) => {
+  userProvidedKey = key;
+  aiClient = null; // Force re-initialization
+};
 
 const getClient = () => {
   if (!aiClient) {
-    // Strictly access the VITE_GEMINI_API_KEY via Vite's import.meta.env
-    // This removes any fallbacks to process.env or other variable names to ensure
-    // we are only using the specific key configured in Vercel.
-    const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
+    // Priority: User Key > Vite Env Key
+    const apiKey = userProvidedKey || (import.meta as any).env.VITE_GEMINI_API_KEY;
 
     if (!apiKey) {
-      console.error("Configuration Error: VITE_GEMINI_API_KEY is missing.");
-      // Debugging aid: Log available keys (excluding values) to help identify if VITE_ prefix is missing
-      console.log("Available Environment Keys:", Object.keys((import.meta as any).env).filter(k => k.startsWith('VITE_')));
-      
-      throw new Error("VITE_GEMINI_API_KEY is missing. Please check your Vercel Environment Variables.");
+      throw new Error("API Key is missing. Please provide a Google API Key.");
     }
 
     aiClient = new GoogleGenAI({ apiKey });
@@ -26,52 +27,40 @@ const getClient = () => {
 // --- System Prompts ---
 
 const STANDARD_PROMPT = `
-You are a helpful, knowledgeable AI assistant with access to the user's document library.
+### SYSTEM ROLE
+You are a knowledgeable AI assistant. Your goal is to answer the user’s questions clearly and accurately based on the provided documents or your general knowledge.
 
-TASK
-You must ask exactly 10 questions, one at a time.
+### RESPONSE GUIDELINES
+1. Be factual, concise, and clear.
+2. Provide brief clarifications or examples if they help the user understand the content.
+3. Avoid structured reflection or guidance through personal insight.
+5. Keep tone neutral and style comparable to a reflective AI.
 
-QUESTION STYLE
-- Focus on factual understanding and content recall
-- Avoid emotional or reflective language
-- Each question should stand on its own
-- Keep questions concise and neutral
-
-CONSTRAINTS
-- Ask exactly one question per response
-- Stop after the 10th question
-- Do not reference previous answers unless necessary
-
-CONTENT RULES
-1. Use the provided Reference Material when possible.
-2. If information is not found, state that you are using general knowledge.
-3. Do not speculate beyond the documents.
-
-Begin with Question 1.
+### SUCCESS METRIC
+The user receives accurate and understandable answers that are comparable in style and length to a reflective response.
 `;
 
 const SMART_PROMPT = `
 You are Echomind, a reflective conversational partner.
 
 IMPORTANT
-You must guide the user through exactly 10 questions, one per turn.
-After the 10th question, briefly reflect the user's insight and end the conversation.
+You must guide the user through a reflective arc of exactly 10 CONVERSATIONAL TURNS.
+Your goal is to elicit the user's thoughts, not to quiz them.
 
-INTERNAL STRUCTURE (DO NOT MENTION)
-Your questions must implicitly follow this progression:
-1–2: situating a specific reading moment
-3–4: emotional and cognitive responses
-5–6: evaluation (helpful vs. difficult)
-7–8: deeper meaning and connections
-9: distilled learning
-10: forward-looking intention
+INTERNAL STRUCTURE (THE GIBBS ARC)
+Map your guidance to the current turn number:
+- Turns 1–2: Situating (Ask about specific moments/facts)
+- Turns 3–4: Feelings (Ask about emotions/reactions)
+- Turns 5–6: Evaluation (Ask what was good/bad)
+- Turns 7–8: Analysis (Ask for deeper meaning/connections)
+- Turn 9: Conclusion (Distill what was learned)
+- Turn 10: Action (Shape future intention & End)
 
-CONVERSATION RULES
-- Ask exactly one main question per response
-- Optional gentle follow-up allowed within the same turn
-- Adapt wording to the user's previous answer
-- Do not summarize the reading
-- Do not name or reference any reflective framework
+HANDLING USER QUESTIONS (THE PIVOT)
+If the user asks YOU a question:
+1. Answer it briefly and helpfully.
+2. Immediately PIVOT back to the reflective arc by asking your next guiding question.
+3. Do not let the user's questions derail the pacing of the 10 turns.
 
 STYLE
 - Warm, thoughtful, unhurried
@@ -79,13 +68,11 @@ STYLE
 - Reflect the user’s own words when possible
 - 3–5 sentences maximum per response
 
-OPENING (USE ONLY FOR QUESTION 1)
+OPENING (TURN 1)
 “Thinking back on today’s reading, what’s one specific moment or idea that’s still lingering with you?”
 
-ENDING (AFTER QUESTION 10)
+ENDING (TURN 10)
 Briefly reflect the user’s insight, invite one intentional next step, then say goodbye.
-
-Begin with Question 1.
 `;
 
 /**
@@ -103,97 +90,6 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
   }
   
   return response.embeddings[0].values;
-};
-
-/**
- * Generates a concise summary for a single document to be stored in DB.
- * Kept for reference, but currently unused in main flow.
- */
-export const generateDocumentSummary = async (title: string, content: string): Promise<string> => {
-  const ai = getClient();
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `
-        Analyze the following document and provide a dense, information-rich summary.
-        Title: ${title}
-        Content: ${content.slice(0, 50000)} (truncated if too long)
-        
-        Requirements:
-        1. Maximum 500 characters.
-        2. Focus on main themes, key arguments, and specific entities.
-        3. Do not use phrases like "This document discusses". go straight to the point.
-      `,
-      config: {
-        maxOutputTokens: 200,
-        temperature: 0.3
-      }
-    });
-    return response.text || "";
-  } catch (e) {
-    console.warn("Summary generation failed", e);
-    return "";
-  }
-};
-
-/**
- * Analyzes documents to create a topic distribution for the summary chart.
- * Uses a deterministic classification approach for robust stats.
- */
-export const generateTopicSummary = async (documents: {title: string, content: string, summary?: string}[]): Promise<{label: string, value: number}[]> => {
-  const ai = getClient();
-  
-  // REVERTED: Use pure content slice (first 500 chars) instead of AI summary
-  const docList = documents.map((d, i) => {
-    const textSnippet = d.content.slice(0, 500);
-    return `Doc ${i+1} Title: ${d.title}\nContent Digest: ${textSnippet}...`;
-  }).join('\n\n');
-
-  const prompt = `
-  You are a data analyst. I have ${documents.length} documents.
-  
-  YOUR TASK:
-  1. Identify 3-6 distinct "Themes" that categorize these documents.
-  2. Assign EACH document to exactly ONE best-fitting Theme.
-  3. Count the number of documents in each Theme.
-  4. Calculate the percentage: (Count / ${documents.length}) * 100.
-  
-  INPUT DOCUMENTS:
-  ${docList}
-  
-  OUTPUT:
-  Return JSON only.
-  `;
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      temperature: 0, // CRITICAL: Makes the output deterministic/consistent
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            label: { type: Type.STRING, description: "Theme name (max 3 words)" },
-            value: { type: Type.NUMBER, description: "Calculated percentage based on document count" }
-          },
-          required: ["label", "value"]
-        }
-      }
-    }
-  });
-
-  try {
-    const data = JSON.parse(response.text || '[]');
-    // Fallback: If AI returns empty or fails, give a generic result
-    if (!data || data.length === 0) return [{ label: "General Content", value: 100 }];
-    return data;
-  } catch (e) {
-    console.error("Failed to parse topic summary", e);
-    return [{ label: "General Knowledge", value: 100 }];
-  }
 };
 
 /**

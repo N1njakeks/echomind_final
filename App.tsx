@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus } from './services/supabase';
-import { generateAnswer, generateEmbedding, generateTopicSummary, generateDocumentSummary } from './services/gemini';
+import { generateAnswer, generateEmbedding, setGeminiApiKey } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { SourceFile, ChatMessage, ChatSession } from './types';
 import ChromeExtensionSettings from './components/ChromeExtensionSettings';
-import QuestionnaireModal from './components/QuestionnaireModal'; // Import
+import QuestionnaireModal from './components/QuestionnaireModal';
+import ApiKeyModal from './components/ApiKeyModal';
 import { 
   LogOut, 
   FileText, 
@@ -57,47 +58,6 @@ const InitialLoader = () => (
     `}</style>
   </div>
 );
-
-// --- Knowledge Distribution Component ---
-const KnowledgeDistribution = ({ data }: { data: { label: string, value: number }[] }) => {
-  const colors = ['bg-slate-800', 'bg-slate-600', 'bg-slate-500', 'bg-slate-400', 'bg-slate-300', 'bg-slate-200'];
-  const totalValue = data.reduce((acc, item) => acc + item.value, 0);
-
-  return (
-    <div className="w-full max-w-2xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-500">
-      <div className="space-y-2">
-        <div className="flex justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          <span>Topic Distribution</span>
-          <span>100%</span>
-        </div>
-        <div className="h-6 w-full flex rounded-lg overflow-hidden ring-1 ring-slate-200 shadow-sm bg-slate-100">
-          {data.map((item, index) => {
-            const widthPercentage = totalValue > 0 ? (item.value / totalValue) * 100 : 0;
-            return (
-              <div 
-                key={index}
-                style={{ width: `${widthPercentage}%` }} 
-                className={`${colors[index % colors.length]} h-full transition-all duration-1000 ease-out border-r border-white/10 last:border-0`}
-                title={`${item.label}: ${Math.round(item.value)}%`}
-              />
-            );
-          })}
-        </div>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {data.map((item, index) => (
-          <div key={index} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl hover:border-slate-300 hover:shadow-sm transition-all group">
-            <div className="flex items-center space-x-3">
-              <div className={`w-3 h-3 rounded-full ${colors[index % colors.length]} group-hover:scale-110 transition-transform`} />
-              <span className="font-medium text-slate-700 text-sm truncate max-w-[140px]">{item.label}</span>
-            </div>
-            <span className="text-sm font-bold text-slate-400 group-hover:text-slate-600">{Math.round(item.value)}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
 
 // --- Auth Screen Component ---
 const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
@@ -176,14 +136,15 @@ export default function App() {
 
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showOverview, setShowOverview] = useState(false);
-  const [overviewData, setOverviewData] = useState<{ label: string, value: number }[] | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
-  // NEW: Questionnaire State
+  // Questionnaire State
   const [questionnaireType, setQuestionnaireType] = useState<'pre' | 'post' | null>(null);
   const [surveyStatus, setSurveyStatus] = useState({ pre: false, post: false });
+
+  // API Key State
+  const [userApiKey, setUserApiKey] = useState<string | null>(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -198,12 +159,9 @@ export default function App() {
       setSession(session);
       if (session) {
         await loadData(session.user.id);
-        // Check Questionnaire Status
         const status = await getQuestionnaireStatus();
         setSurveyStatus(status);
-        if (!status.pre) {
-          setQuestionnaireType('pre');
-        }
+        // We will prompt for Pre-Survey only when user tries to Start Session
       }
       setIsAppLoading(false);
     };
@@ -216,14 +174,12 @@ export default function App() {
         setChatSessions([]);
         setCurrentSessionId(null);
         setSurveyStatus({ pre: false, post: false });
+        setUserApiKey(null);
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         setSession(session);
         if (session) {
             loadData(session.user.id);
-            getQuestionnaireStatus().then(status => {
-                setSurveyStatus(status);
-                if(!status.pre) setQuestionnaireType('pre');
-            });
+            getQuestionnaireStatus().then(status => setSurveyStatus(status));
         }
       }
     });
@@ -234,7 +190,6 @@ export default function App() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, loading]);
 
-  // Update selected mode based on availability if the current selection is taken
   useEffect(() => {
     if (!currentSessionId) {
       if (selectedMode === 'standard' && hasV1 && !hasV2) setSelectedMode('reflective');
@@ -262,6 +217,7 @@ export default function App() {
     setMessages([]);
     setChatSessions([]);
     setCurrentSessionId(null);
+    setUserApiKey(null);
   };
 
   const handleNewChat = () => {
@@ -272,9 +228,6 @@ export default function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setIsSidebarOpen(false);
-    setShowOverview(false);
-    setOverviewData(null);
-    // Reset selection to whatever is available
     if (!hasV1) setSelectedMode('standard');
     else if (!hasV2) setSelectedMode('reflective');
   };
@@ -289,7 +242,6 @@ export default function App() {
       if (currentSessionId === id) {
         setMessages([]);
         setCurrentSessionId(null);
-        setShowOverview(false);
       }
     } catch (err) {
       console.error("Failed to delete chat", err);
@@ -299,7 +251,20 @@ export default function App() {
   const handleSelectSession = async (sessionId: string) => {
     setLoading(true);
     setIsSidebarOpen(false);
-    setShowOverview(false);
+    
+    // Check for API key before accessing old sessions too, if needed?
+    // For now, we assume user might need to re-enter key if they refresh.
+    if (!userApiKey) {
+        // If we want to force key on old sessions too:
+        // setShowApiKeyModal(true);
+        // But let's assume the Start Flow handles the initial key entry.
+        // If they click an old session without a key, they might get an error on send.
+        // We'll prompt them when they try to send if key is missing (implicit in handleSend).
+        // For better UX, let's just prompt now if missing.
+        setShowApiKeyModal(true);
+        // We continue to load UI, but they can't send until key is in.
+    }
+
     try {
       const msgs = await fetchChatMessages(sessionId);
       const session = chatSessions.find(s => s.id === sessionId);
@@ -350,24 +315,47 @@ export default function App() {
     if(window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
-  const initiateNewStudySession = async (selectedFiles: SourceFile[]) => {
+  // --- NEW FLOW START ---
+  const handleStartSessionClick = () => {
+    // 1. Check Limit
     if (sessionLimitReached) {
         alert("Limit reached: You have already created both V1 & V2 chats. Please use the existing sessions in history.");
         return;
     }
 
-    // Use the user's selected mode, but double check availability
+    // 2. Check Docs
+    const selectedFiles = documents.filter(d => d.isSelected);
+    // Note: We allow starting without docs if they want generic chat, but typically we want docs.
+    // If you want to enforce docs:
+    /* if (selectedFiles.length === 0) { alert("Please select at least one document from the Knowledge Base."); return; } */
+
+    // 3. Check Pre-Survey
+    if (!surveyStatus.pre) {
+        setQuestionnaireType('pre');
+        return;
+    }
+
+    // 4. Check API Key
+    if (!userApiKey) {
+        setShowApiKeyModal(true);
+        return;
+    }
+
+    // 5. Create Session
+    initiateNewStudySession(selectedFiles);
+  };
+
+  const initiateNewStudySession = async (selectedFiles: SourceFile[]) => {
+    // Determine mode
     let modeToCreate = selectedMode;
     if (modeToCreate === 'standard' && hasV1) modeToCreate = 'reflective';
     if (modeToCreate === 'reflective' && hasV2) modeToCreate = 'standard';
     
-    setIsAnalyzing(true);
-    setShowOverview(true);
     setMessages([]);
     
     try {
       const sourceIds = selectedFiles.map(d => d.id);
-      const title = `Analysis (${modeToCreate === 'standard' ? 'V1' : 'V2'})`;
+      const title = `Session (${modeToCreate === 'standard' ? 'V1' : 'V2'})`;
       const sessionData = await createChatSession(title, sourceIds, modeToCreate);
       
       setCurrentSessionId(sessionData.id);
@@ -377,41 +365,57 @@ export default function App() {
         const updatedSessions = await fetchChatSessions(session.user.id);
         setChatSessions(updatedSessions);
       }
-
-      const validDocs = selectedFiles.filter(d => d.content) as any[];
-      const summary = await generateTopicSummary(validDocs);
-      setOverviewData(summary);
       
     } catch (e) {
       console.error("Study session initialization failed", e);
       alert("Error creating session. Please try again.");
-      setShowOverview(false);
-    } finally {
-      setIsAnalyzing(false);
     }
   };
 
-  const selectAllAndAnalyze = () => {
-    const updatedDocs = documents.map(d => ({ ...d, isSelected: true }));
-    setDocuments(updatedDocs);
-    initiateNewStudySession(updatedDocs);
+  // Called when Pre-Questionnaire finishes
+  const handleSurveyComplete = async () => {
+      await updateSurveyStatus();
+      setQuestionnaireType(null);
+      // Immediately Prompt for API Key after Pre-Survey
+      if (!userApiKey) {
+          setShowApiKeyModal(true);
+      }
   };
 
-  const startAnalysis = () => {
-    const selected = documents.filter(d => d.isSelected);
-    if (selected.length === 0) return;
-    initiateNewStudySession(selected);
+  const handleApiKeySubmit = (key: string) => {
+      setGeminiApiKey(key);
+      setUserApiKey(key);
+      setShowApiKeyModal(false);
+      
+      // If we were trying to start a session, retry now
+      // Logic: If we are not in a session, and have selected docs, we likely clicked start.
+      // Or we can just let them click start again. 
+      // Better UX: If no current session, trigger the start logic.
+      if (!currentSessionId) {
+           const selectedFiles = documents.filter(d => d.isSelected);
+           if (sessionLimitReached) return;
+           initiateNewStudySession(selectedFiles);
+      }
+  };
+
+  const updateSurveyStatus = async () => {
+      const status = await getQuestionnaireStatus();
+      setSurveyStatus(status);
   };
 
   const sendMessage = async (overrideText?: string) => {
     const textToUse = overrideText || inputText;
     if (!textToUse.trim() || loading || !currentSessionId) return;
     
+    // Check API Key again just in case
+    if (!userApiKey) {
+        setShowApiKeyModal(true);
+        return;
+    }
+
     const userMsgCount = messages.filter(m => m.role === 'user').length;
     if (userMsgCount >= MAX_MESSAGES_PER_SESSION) return;
     
-    if (showOverview) setShowOverview(false);
-
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: textToUse, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -421,9 +425,22 @@ export default function App() {
     try {
       await saveChatMessage(currentSessionId, userMsg);
       const selectedDocs = documents.filter(d => d.isSelected);
-      let context = selectedDocs.length > 0 
-        ? selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n")
-        : (await findSimilarDocuments(await generateEmbedding(textToUse))).map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
+      
+      // We only use selected docs for context if they are explicitly selected in the sidebar
+      // Otherwise we fall back to RAG if no selection? 
+      // For this study, let's assume the session is bound to the IDs saved in DB, 
+      // OR we just use whatever is currently checked in the sidebar as "Active Context".
+      // Let's stick to sidebar selection as "Active Context".
+      
+      let context = "";
+      if (selectedDocs.length > 0) {
+          context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+      } else {
+         // Fallback RAG if nothing selected? Or just chat?
+         // Let's do simple RAG if nothing selected, using embedding
+         const similar = await findSimilarDocuments(await generateEmbedding(textToUse));
+         context = similar.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
+      }
 
       const aiResponseText = await generateAnswer(context, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
       const aiMsg: ChatMessage = { id: crypto.randomUUID(), role: 'model', text: aiResponseText, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
@@ -432,43 +449,32 @@ export default function App() {
       await saveChatMessage(currentSessionId, aiMsg);
 
       // --- STUDY TRIGGER LOGIC ---
-      // Check if this new message pushes us to the limit (10 user messages)
       const updatedUserCount = newMessages.filter(m => m.role === 'user').length;
       if (updatedUserCount >= MAX_MESSAGES_PER_SESSION) {
-         // Check if we now have both sessions full (simplification: if both exist)
          if (hasV1 && hasV2) {
-             // We are likely finishing the second session now.
              if (!surveyStatus.post) {
                  setTimeout(() => {
                      setQuestionnaireType('post');
-                 }, 1500); // Small delay for user to read AI response first
+                 }, 1500);
              }
          }
       }
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: "Request error.", timestamp: Date.now() }]);
+      const errMsg = err.message || "Request error.";
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: `Error: ${errMsg}`, timestamp: Date.now() }]);
     } finally { setLoading(false); }
-  };
-
-  const updateSurveyStatus = async () => {
-      const status = await getQuestionnaireStatus();
-      setSurveyStatus(status);
-      setQuestionnaireType(null);
   };
 
   if (isAppLoading) return <InitialLoader />;
   if (!session) return <AuthScreen onLogin={() => {}} />;
 
-  const selectedPages = documents.filter(d => d.isSelected).reduce((sum, d) => sum + (d.pageCount || 1), 0);
-  const selectedCount = documents.filter(d => d.isSelected).length;
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
   const isSessionLocked = !!currentSessionId;
   const userMessageCount = messages.filter(m => m.role === 'user').length;
   const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
 
-  // Determine active display mode: either from current session OR from selection state
   const displayMode = currentSessionId ? chatMode : selectedMode;
 
   return (
@@ -484,9 +490,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* --- SPLIT SIDEBAR CONTENT --- */}
-        
-        {/* Top Half: Knowledge Base */}
+        {/* --- SIDEBAR CONTENT --- */}
         <div className="flex-1 flex flex-col min-h-0 border-b border-slate-100 relative">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -512,22 +516,19 @@ export default function App() {
               ))}
             </div>
             
-            {/* Analyze Button - Always visible if docs selected */}
-            {documents.some(d => d.isSelected) && (
-              <div className="p-3 border-t border-slate-100 shrink-0 bg-white z-10">
-                <button 
-                  onClick={startAnalysis} 
-                  disabled={sessionLimitReached}
-                  className={`w-full py-2 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm transition-all ${sessionLimitReached ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
-                >
-                  <Sparkles className="w-3.5 h-3.5 mr-2" />
-                  {sessionLimitReached ? 'Limit reached' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`}
-                </button>
-              </div>
-            )}
+            {/* Start Button in Sidebar */}
+            <div className="p-3 border-t border-slate-100 shrink-0 bg-white z-10">
+              <button 
+                onClick={handleStartSessionClick} 
+                disabled={sessionLimitReached}
+                className={`w-full py-2 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm transition-all ${sessionLimitReached ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
+              >
+                <Sparkles className="w-3.5 h-3.5 mr-2" />
+                {sessionLimitReached ? 'Limit reached' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`}
+              </button>
+            </div>
         </div>
 
-        {/* Bottom Half: History */}
         <div className="flex-1 flex flex-col min-h-0 bg-slate-50/30">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -629,30 +630,19 @@ export default function App() {
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto relative overscroll-contain">
-          {showOverview ? (
-            <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12 space-y-12 animate-in fade-in zoom-in-95 duration-700 pb-32">
-              <div className="text-center max-w-2xl">
-                <h2 className="text-3xl md:text-4xl font-bold text-slate-800 mb-4 tracking-tight">Oh, you have <span className="text-slate-500">{selectedPages} pages</span> of knowledge ready.</h2>
-                <p className="text-slate-500 text-lg">Here's a pulse of your selection for this {displayMode === 'reflective' ? 'V2' : 'V1'} session.</p>
-              </div>
-              <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-3xl p-8 md:p-12 shadow-sm">
-                {isAnalyzing ? <div className="flex flex-col items-center justify-center py-20 space-y-4"><Loader2 className="w-12 h-12 animate-spin text-slate-800" /><p className="text-slate-400 font-medium animate-pulse">Mapping content pulse...</p></div> 
-                : overviewData && <div className="space-y-12"><KnowledgeDistribution data={overviewData} /><div className="pt-8 border-t border-slate-100"><p className="text-center text-slate-600 font-medium mb-6">What would you like to explore?</p><div className="max-w-xl mx-auto flex items-center relative"><input autoFocus type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder={`Ask about these ${selectedCount} docs...`} className="w-full pl-6 pr-14 py-5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-slate-400 focus:outline-none focus:bg-white transition-all text-sm" /><button onClick={() => sendMessage()} className="absolute right-3 p-3 bg-slate-800 text-white rounded-xl hover:bg-slate-900 transition-colors"><Send className="w-5 h-5" /></button></div></div></div>}
-              </div>
-            </div>
-          ) : (
             <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-32 md:pb-20">
               {messages.length === 0 && !currentSessionId && (
                 <div className="h-96 flex flex-col items-center justify-center text-slate-300 px-6 text-center">
                   {documents.length > 0 ? (
                     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-md mx-auto">
                         <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-4 mx-auto text-slate-600"><FileText className="w-6 h-6" /></div>
-                        <h3 className="text-lg font-bold text-slate-800 mb-2">Knowledge Base Ready</h3>
-                        <p className="text-slate-500 mb-6 text-sm leading-relaxed">You have <strong>{totalPages} pages</strong> saved. Use the "Analyze & Start" button on the left to begin a {selectedMode === 'reflective' ? 'V2' : 'V1'} study session.</p>
-                        <button onClick={selectAllAndAnalyze} disabled={sessionLimitReached} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg font-medium transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
-                          <Sparkles className="w-4 h-4 mr-2" />
-                          {sessionLimitReached ? 'Limit reached' : `Analyze All & Start ${selectedMode === 'reflective' ? 'V2' : 'V1'}`}
-                        </button>
+                        <h3 className="text-lg font-bold text-slate-800 mb-2">Select & Start</h3>
+                        <p className="text-slate-500 mb-6 text-sm leading-relaxed">
+                            Use the checkboxes in the sidebar to select documents. <br/>Then click "Start Session".
+                        </p>
+                        <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-400 border border-slate-100">
+                           {documents.filter(d => d.isSelected).length} Documents selected
+                        </div>
                     </div>
                   ) : <><BrainCircuit className="w-16 h-16 mb-4 opacity-10" /><p className="text-sm">Ready for uploads.</p></>}
                 </div>
@@ -665,10 +655,9 @@ export default function App() {
               {loading && <div className="flex w-full justify-start"><div className="bg-white border border-slate-200 p-3 md:p-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center space-x-2"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /><span className="text-xs text-slate-400">Processing...</span></div></div>}
               {isLimitReached && <div className="flex w-full justify-center mt-6"><div className="bg-slate-100 border border-slate-200 text-slate-500 text-xs py-2 px-4 rounded-full flex items-center"><Lock className="w-3 h-3 mr-2" />Limit reached for this session.</div></div>}
             </div>
-          )}
         </div>
 
-        {!showOverview && currentSessionId && (
+        {currentSessionId && (
           <div className="p-3 md:p-4 bg-white border-t border-slate-200 shrink-0 z-20 shadow-[0_-8px_20px_-5px_rgba(0,0,0,0.05)] md:shadow-none pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
             <div className="max-w-4xl mx-auto relative flex items-center">
               <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !isLimitReached && sendMessage()} placeholder={isLimitReached ? "Limit reached." : "Message..."} className={`w-full pl-4 md:pl-5 pr-12 py-3 md:py-4 border rounded-xl focus:outline-none transition-all text-sm ${isLimitReached ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 border-slate-200 focus:ring-2 focus:ring-slate-300 focus:bg-white'}`} disabled={loading || isLimitReached} />
@@ -685,7 +674,15 @@ export default function App() {
         <QuestionnaireModal 
           type={questionnaireType} 
           onClose={() => setQuestionnaireType(null)} 
-          onComplete={updateSurveyStatus}
+          onComplete={handleSurveyComplete}
+        />
+      )}
+
+      {/* API Key Modal */}
+      {showApiKeyModal && (
+        <ApiKeyModal 
+            onClose={() => setShowApiKeyModal(false)}
+            onSubmit={handleApiKeySubmit}
         />
       )}
 
