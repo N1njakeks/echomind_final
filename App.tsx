@@ -536,8 +536,12 @@ export default function App() {
                 disabled={sessionLimitReached}
                 className={`w-full py-2 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm transition-all ${sessionLimitReached ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
               >
-                <Sparkles className="w-3.5 h-3.5 mr-2" />
-                {sessionLimitReached ? 'Limit reached' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`}
+                {sessionLimitReached 
+                    ? 'Limit reached' 
+                    : (hasV1 
+                        ? 'Start V2 Session' 
+                        : (hasV2 ? 'Start V1 Session' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`))
+                }
               </button>
             </div>
         </div>
