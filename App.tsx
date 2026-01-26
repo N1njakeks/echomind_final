@@ -166,9 +166,14 @@ export default function App() {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  // REMOVED: sidebarTab state
+  
+  // Chat State
   const [chatMode, setChatMode] = useState<'standard' | 'reflective'>('standard');
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  
+  // NEW: Manual selection state for new sessions
+  const [selectedMode, setSelectedMode] = useState<'standard' | 'reflective'>('standard');
+
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showOverview, setShowOverview] = useState(false);
@@ -229,6 +234,14 @@ export default function App() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, loading]);
 
+  // Update selected mode based on availability if the current selection is taken
+  useEffect(() => {
+    if (!currentSessionId) {
+      if (selectedMode === 'standard' && hasV1 && !hasV2) setSelectedMode('reflective');
+      if (selectedMode === 'reflective' && hasV2 && !hasV1) setSelectedMode('standard');
+    }
+  }, [hasV1, hasV2, currentSessionId, selectedMode]);
+
   const loadData = async (userId?: string) => {
     let uid = userId || (await supabase.auth.getSession()).data.session?.user.id;
     if (!uid) return;
@@ -261,6 +274,9 @@ export default function App() {
     setIsSidebarOpen(false);
     setShowOverview(false);
     setOverviewData(null);
+    // Reset selection to whatever is available
+    if (!hasV1) setSelectedMode('standard');
+    else if (!hasV2) setSelectedMode('reflective');
   };
 
   const handleDeleteChat = async (e: React.MouseEvent, id: string) => {
@@ -340,7 +356,10 @@ export default function App() {
         return;
     }
 
-    const modeToCreate = !hasV1 ? 'standard' : 'reflective';
+    // Use the user's selected mode, but double check availability
+    let modeToCreate = selectedMode;
+    if (modeToCreate === 'standard' && hasV1) modeToCreate = 'reflective';
+    if (modeToCreate === 'reflective' && hasV2) modeToCreate = 'standard';
     
     setIsAnalyzing(true);
     setShowOverview(true);
@@ -449,6 +468,9 @@ export default function App() {
   const userMessageCount = messages.filter(m => m.role === 'user').length;
   const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
 
+  // Determine active display mode: either from current session OR from selection state
+  const displayMode = currentSessionId ? chatMode : selectedMode;
+
   return (
     <div className="flex h-[100dvh] bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
       {isSidebarOpen && <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px] z-20 md:hidden" onClick={() => setIsSidebarOpen(false)} />}
@@ -499,7 +521,7 @@ export default function App() {
                   className={`w-full py-2 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm transition-all ${sessionLimitReached ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
                 >
                   <Sparkles className="w-3.5 h-3.5 mr-2" />
-                  {sessionLimitReached ? 'Limit reached (Max 2 Sessions)' : 'Analyze & Start Session'}
+                  {sessionLimitReached ? 'Limit reached' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`}
                 </button>
               </div>
             )}
@@ -553,9 +575,13 @@ export default function App() {
             <div className="min-w-0">
               <h1 className="font-bold text-slate-800 text-base md:text-lg truncate">{currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Session") : "New Session"}</h1>
               <div className="flex items-center gap-3 text-[10px] md:text-xs text-slate-400 font-semibold uppercase tracking-wider mt-0.5">
-                <span className={chatMode === 'reflective' ? 'text-indigo-500 font-bold' : ''}>{chatMode === 'reflective' ? "V2" : "V1"}</span>
-                <span className="text-slate-300">|</span>
-                <span className={isLimitReached ? "text-red-500" : ""}>{userMessageCount} / {MAX_MESSAGES_PER_SESSION}</span>
+                <span className={displayMode === 'reflective' ? 'text-indigo-500 font-bold' : ''}>{displayMode === 'reflective' ? "V2" : "V1"}</span>
+                {currentSessionId && (
+                  <>
+                    <span className="text-slate-300">|</span>
+                    <span className={isLimitReached ? "text-red-500" : ""}>{userMessageCount} / {MAX_MESSAGES_PER_SESSION}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -577,9 +603,27 @@ export default function App() {
                 </button>
              </div>
 
-            <div className="hidden md:flex items-center space-x-1 bg-slate-100 p-1 rounded-lg opacity-70">
-                <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V1</button>
-                <button disabled className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${chatMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>V2</button>
+            <div className="hidden md:flex items-center space-x-1 bg-slate-100 p-1 rounded-lg">
+                <button 
+                  onClick={() => !currentSessionId && !hasV1 && setSelectedMode('standard')}
+                  disabled={!!currentSessionId || hasV1}
+                  className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all 
+                    ${displayMode === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}
+                    ${!currentSessionId && !hasV1 ? 'hover:text-slate-800 cursor-pointer' : 'cursor-default opacity-70'}
+                  `}
+                >
+                  V1
+                </button>
+                <button 
+                  onClick={() => !currentSessionId && !hasV2 && setSelectedMode('reflective')}
+                  disabled={!!currentSessionId || hasV2}
+                  className={`px-3 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all 
+                    ${displayMode === 'reflective' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}
+                    ${!currentSessionId && !hasV2 ? 'hover:text-slate-800 cursor-pointer' : 'cursor-default opacity-70'}
+                  `}
+                >
+                  V2
+                </button>
             </div>
           </div>
         </header>
@@ -589,7 +633,7 @@ export default function App() {
             <div className="min-h-full flex flex-col items-center justify-center p-6 md:p-12 space-y-12 animate-in fade-in zoom-in-95 duration-700 pb-32">
               <div className="text-center max-w-2xl">
                 <h2 className="text-3xl md:text-4xl font-bold text-slate-800 mb-4 tracking-tight">Oh, you have <span className="text-slate-500">{selectedPages} pages</span> of knowledge ready.</h2>
-                <p className="text-slate-500 text-lg">Here's a pulse of your selection for this {chatMode === 'reflective' ? 'V2' : 'V1'} session.</p>
+                <p className="text-slate-500 text-lg">Here's a pulse of your selection for this {displayMode === 'reflective' ? 'V2' : 'V1'} session.</p>
               </div>
               <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-3xl p-8 md:p-12 shadow-sm">
                 {isAnalyzing ? <div className="flex flex-col items-center justify-center py-20 space-y-4"><Loader2 className="w-12 h-12 animate-spin text-slate-800" /><p className="text-slate-400 font-medium animate-pulse">Mapping content pulse...</p></div> 
@@ -604,10 +648,10 @@ export default function App() {
                     <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-md mx-auto">
                         <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-4 mx-auto text-slate-600"><FileText className="w-6 h-6" /></div>
                         <h3 className="text-lg font-bold text-slate-800 mb-2">Knowledge Base Ready</h3>
-                        <p className="text-slate-500 mb-6 text-sm leading-relaxed">You have <strong>{totalPages} pages</strong> saved. Use the "Analyze & Start" button on the left to begin a study session.</p>
+                        <p className="text-slate-500 mb-6 text-sm leading-relaxed">You have <strong>{totalPages} pages</strong> saved. Use the "Analyze & Start" button on the left to begin a {selectedMode === 'reflective' ? 'V2' : 'V1'} study session.</p>
                         <button onClick={selectAllAndAnalyze} disabled={sessionLimitReached} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg font-medium transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
                           <Sparkles className="w-4 h-4 mr-2" />
-                          {sessionLimitReached ? 'Limit reached' : 'Analyze All & Start'}
+                          {sessionLimitReached ? 'Limit reached' : `Analyze All & Start ${selectedMode === 'reflective' ? 'V2' : 'V1'}`}
                         </button>
                     </div>
                   ) : <><BrainCircuit className="w-16 h-16 mb-4 opacity-10" /><p className="text-sm">Ready for uploads.</p></>}
