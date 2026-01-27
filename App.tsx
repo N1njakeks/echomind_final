@@ -520,7 +520,10 @@ export default function App() {
                 <div className="flex flex-col items-center justify-center h-20 text-slate-400 px-4 text-center"><span className="text-xs">No documents. Add some!</span></div>
               ) : documents.map(doc => (
                 <div key={doc.id} className={`group flex items-center p-2 mb-1 rounded-md transition-all cursor-pointer ${doc.isSelected ? 'bg-slate-100 border-slate-200' : 'hover:bg-slate-50 border-transparent'} border`} onClick={() => handleViewDocument(doc)}>
-                  <button className="mr-3 text-slate-400 shrink-0" onClick={(e) => { e.stopPropagation(); toggleDocumentSelection(doc.id); }}>
+                  <button 
+                    className="p-2 -ml-2 mr-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors shrink-0 z-10" 
+                    onClick={(e) => { e.stopPropagation(); toggleDocumentSelection(doc.id); }}
+                  >
                     {doc.isSelected ? <CheckSquare className="w-4 h-4 text-slate-800" /> : <Square className="w-4 h-4" />}
                   </button>
                   <div className="flex-1 min-w-0"><p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p></div>
@@ -572,7 +575,6 @@ export default function App() {
                 <div key={session.id} onClick={() => handleSelectSession(session.id)} className={`group flex items-center p-2 mb-1 rounded-md transition-all cursor-pointer border ${currentSessionId === session.id ? 'bg-white border-slate-200 shadow-sm' : 'hover:bg-white/50 border-transparent'}`}>
                   <div className="mr-3 flex-shrink-0 relative">
                      <MessageSquare className={`w-4 h-4 ${currentSessionId === session.id ? 'text-slate-800' : 'text-slate-400'}`} />
-                     {session.mode === 'reflective' && <div className="absolute -top-1 -right-1 w-2 h-2 bg-indigo-500 rounded-full ring-1 ring-white" title="V2" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className={`text-xs md:text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>{session.title || "Untitled"}</p>
@@ -593,7 +595,7 @@ export default function App() {
             <div className="min-w-0">
               <h1 className="font-bold text-slate-800 text-base md:text-lg truncate">{currentSessionId ? (chatSessions.find(s => s.id === currentSessionId)?.title || "Session") : "New Session"}</h1>
               <div className="flex items-center gap-3 text-[10px] md:text-xs text-slate-400 font-semibold uppercase tracking-wider mt-0.5">
-                <span className={displayMode === 'reflective' ? 'text-indigo-500 font-bold' : ''}>{displayMode === 'reflective' ? "V2" : "V1"}</span>
+                <span className="font-bold text-slate-700">{displayMode === 'reflective' ? "V2" : "V1"}</span>
                 {currentSessionId && (
                   <>
                     <span className="text-slate-300">|</span>
