@@ -216,10 +216,15 @@ export default function App() {
       setDocuments(docs);
       setChatSessions(sessions);
       
-      // Auto-load key if exists
+      // CRITICAL: Auto-load key if exists in DB to use as the preferred key
       if (apiKeyData?.key) {
-          setGeminiApiKey(apiKeyData.key);
+          console.log("App: Loaded user API key from DB.");
+          setGeminiApiKey(apiKeyData.key); // Push to service immediately
           setUserApiKey(apiKeyData.key);
+      } else {
+          // Attempt to fallback to env if exists (but service handles this, we just check for UI)
+          const envKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
+          if (envKey) setUserApiKey(envKey);
       }
 
     } catch (e: any) {
@@ -526,7 +531,7 @@ export default function App() {
       const isOverloaded = errMsg.includes("503") || errMsg.includes("overloaded");
       
       if (isOverloaded) {
-          errMsg = "⚠️ Google AI servers are currently overloaded. Please wait a moment and try again.";
+          errMsg = "⚠️ Google AI servers are overloaded. Please try again in a few moments.";
       } else if (errMsg.includes("429")) {
           errMsg = "⚠️ Request limit reached. Please wait a minute.";
       }

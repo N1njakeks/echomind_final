@@ -6,20 +6,29 @@ let userProvidedKey: string | null = null;
 
 // Allow the app to set the key dynamically at runtime
 export const setGeminiApiKey = (key: string) => {
-  userProvidedKey = key;
-  aiClient = null; // Force re-initialization
-  console.log("Gemini API Key updated explicitly by user.");
+  if (key && key.startsWith("AIza")) {
+    userProvidedKey = key;
+    aiClient = null; // Force re-initialization
+    console.log("Gemini Service: User API Key set successfully.");
+  } else {
+    console.warn("Gemini Service: Invalid key format ignored.");
+  }
 };
 
 const getClient = () => {
+  // Always verify if a client needs to be (re)created
   if (!aiClient) {
-    // STRICT MODE: We ONLY use the userProvidedKey.
-    // We removed 'import.meta.env.VITE_GEMINI_API_KEY' to guarantee 
-    // that no hidden/developer keys are used in this preview.
-    const apiKey = userProvidedKey;
+    // STRICT PRIORITY:
+    // 1. User provided key (from Settings/DB)
+    // 2. Vite Env Var (Fallback for local dev)
+    const apiKey = userProvidedKey || (import.meta as any).env.VITE_GEMINI_API_KEY;
 
     if (!apiKey) {
       throw new Error("API Key is missing. Please enter your Google API Key in the settings.");
+    }
+
+    if (!apiKey.startsWith("AIza")) {
+        throw new Error("Invalid API Key format. Key must start with 'AIza'.");
     }
 
     aiClient = new GoogleGenAI({ apiKey });
@@ -102,7 +111,8 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 };
 
 // Retry helper for overloaded models
-const retryOperation = async <T>(operation: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+// MODIFIED: Reduced retries and delay to prevent "hanging" for 10 minutes
+const retryOperation = async <T>(operation: () => Promise<T>, retries = 1, delay = 1000): Promise<T> => {
   try {
     return await operation();
   } catch (error: any) {
@@ -110,9 +120,8 @@ const retryOperation = async <T>(operation: () => Promise<T>, retries = 3, delay
     const isOverloaded = error?.status === 503 || error?.code === 503 || (error?.message && error.message.toLowerCase().includes('overloaded'));
     
     if (retries > 0 && isOverloaded) {
-       console.warn(`Model overloaded (503). Retrying in ${delay}ms... (${retries} attempts left)`);
+       console.warn(`Model overloaded (503). Retrying once in ${delay}ms...`);
        await new Promise(resolve => setTimeout(resolve, delay));
-       // Exponential backoff
        return retryOperation(operation, retries - 1, delay * 2);
     }
     throw error;
@@ -126,26 +135,18 @@ export const generateAnswer = async (
 ): Promise<string> => {
   const ai = getClient();
   
-  // Choose System Prompt
   const systemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
-  
-  // We use the full history now, as requested. 
-  // Gemini 3 Flash has a massive context window (approx 1M tokens), so we don't need to truncate.
-  // const recentHistory = history.slice(-12); // REMOVED TRUNCATION
   
   const lastUserMsg = history[history.length - 1].text;
   
-  // Construct content with context if available
   let finalPrompt = "";
   
-  // We attach context ONLY to the active prompt to save tokens on previous turns
   if (context) {
       finalPrompt = `CONTEXT FROM DOCUMENTS:\n${context}\n\nUSER QUESTION:\n${lastUserMsg}`;
   } else {
       finalPrompt = lastUserMsg;
   }
 
-  // Convert history to format expected by generateContent (excluding the last one which is our prompt)
   const previousHistory = history.slice(0, history.length - 1);
   
   const contents = previousHistory.map(h => ({
@@ -153,7 +154,6 @@ export const generateAnswer = async (
       parts: [{ text: h.text }]
   }));
   
-  // Add the new message with context
   contents.push({
       role: 'user',
       parts: [{ text: finalPrompt }]
@@ -161,11 +161,12 @@ export const generateAnswer = async (
 
   return await retryOperation(async () => {
       const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview', // USER REQUESTED V3
+          model: 'gemini-3-flash-preview', 
           contents: contents,
           config: {
               systemInstruction: systemInstruction,
-              maxOutputTokens: 8192, // High limit to allow full responses
+              // MODIFIED: Reduced from 8192 to 4096 to reduce probability of timeouts/503 on Free Tier
+              maxOutputTokens: 4096, 
               temperature: 0.7,
           }
       });
