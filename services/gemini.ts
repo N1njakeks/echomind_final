@@ -81,6 +81,7 @@ Briefly reflect the user’s insight, invite one intentional next step, then say
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
   try {
+      // Note: text-embedding-004 might not be available on free tier keys in some regions
       const response = await ai.models.embedContent({
         model: 'text-embedding-004',
         contents: text
@@ -125,12 +126,16 @@ export const generateAnswer = async (
   // Choose System Prompt
   const systemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
   
-  // Construct content with context if available
-  let finalPrompt = "";
+  // We use the full history now, as requested. 
+  // Gemini 3 Flash has a massive context window (approx 1M tokens), so we don't need to truncate.
+  // const recentHistory = history.slice(-12); // REMOVED TRUNCATION
+  
   const lastUserMsg = history[history.length - 1].text;
   
-  // If context exists, we prepend it to the user's last message or handle it as a system text block.
-  // For Gemini 1.5/3, putting it in the user prompt is reliable.
+  // Construct content with context if available
+  let finalPrompt = "";
+  
+  // We attach context ONLY to the active prompt to save tokens on previous turns
   if (context) {
       finalPrompt = `CONTEXT FROM DOCUMENTS:\n${context}\n\nUSER QUESTION:\n${lastUserMsg}`;
   } else {
@@ -138,56 +143,7 @@ export const generateAnswer = async (
   }
 
   // Convert history to format expected by generateContent (excluding the last one which is our prompt)
-  // Actually, simplest way with @google/genai is often just one-shot or managing history manually.
-  // We will pass the full history as "contents" if we were using chat, but for generateContent we construct it.
-  
-  // To keep it simple and robust:
-  // We treat this as a single turn with history embedded if needed, or we use a chat session.
-  // Given the stateless nature of this helper, we'll reconstruct the chat.
-  
-  const chat = ai.chats.create({
-      model: 'gemini-3-flash-preview', // USER REQUESTED V3
-      config: {
-          systemInstruction: systemInstruction,
-          temperature: 0.7, // Slightly creative but focused
-      }
-  });
-  
-  // Replay history (excluding the very last new message which we send now)
   const previousHistory = history.slice(0, history.length - 1);
-  
-  // Add context to the first user message if it's the start, or inject implicitly.
-  // Strategy: If we have documents, we can add them as a separate user/model turn pair at the start
-  // or just append to the system instruction. Appending to system instruction is cleaner for RAG.
-  
-  // Let's modify the system instruction for this session if context exists
-  if (context) {
-     // Note: We can't easily modify config after create in the SDK simply, 
-     // but we can prepend context to the first message or use it in the active prompt.
-     // Let's prepend to the current message for RAG relevance.
-  }
-
-  // Load history into chat
-  for (const msg of previousHistory) {
-     // We need to map 'user'/'model' correctly.
-     // The SDK handles history if we use sendMessage sequentially, 
-     // OR we can try to initialize with history (not yet fully standard in this wrapper version).
-     // Safest: Send messages sequentially to build state (slow but accurate) 
-     // OR just formatting the prompt as a big block if history is short.
-     
-     // Optimization: Just send the last few turns + context to avoid strict history limitations/latency
-     // But for a "Chat" feel, full history is better.
-     
-     // Let's assume we just want the response to the *current* prompt with context.
-     // We'll trust the model to handle the context in the final prompt.
-  }
-  
-  // To avoid complexity with SDK chat history management in this specific file:
-  // We will send the history as a structured prompt list if possible, or just the last message + context.
-  // However, `chat.sendMessage` is stateful. 
-  
-  // FASTEST/ROBUST METHOD for V3 Flash Preview:
-  // Send the history as a list of contents.
   
   const contents = previousHistory.map(h => ({
       role: h.role,
@@ -206,7 +162,8 @@ export const generateAnswer = async (
           contents: contents,
           config: {
               systemInstruction: systemInstruction,
-              maxOutputTokens: 2048, // ample space for answers
+              maxOutputTokens: 8192, // High limit to allow full responses
+              temperature: 0.7,
           }
       });
       

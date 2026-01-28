@@ -28,7 +28,8 @@ import {
   Info,
   ClipboardList,
   Library,
-  History as HistoryIcon
+  History as HistoryIcon,
+  AlertTriangle
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
@@ -519,8 +520,18 @@ export default function App() {
 
     } catch (err: any) {
       console.error(err);
-      const errMsg = err.message || "Request error.";
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: `Error: ${errMsg}`, timestamp: Date.now() }]);
+      
+      // PARSE AND CLEAN ERROR MESSAGE
+      let errMsg = err.message || "Request error.";
+      const isOverloaded = errMsg.includes("503") || errMsg.includes("overloaded");
+      
+      if (isOverloaded) {
+          errMsg = "⚠️ Google AI servers are currently overloaded. Please wait a moment and try again.";
+      } else if (errMsg.includes("429")) {
+          errMsg = "⚠️ Request limit reached. Please wait a minute.";
+      }
+      
+      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: `${errMsg}`, timestamp: Date.now() }]);
     } finally { setLoading(false); }
   };
 
@@ -715,7 +726,16 @@ export default function App() {
               )}
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[90%] md:max-w-[80%] p-3.5 md:p-4 rounded-2xl shadow-sm text-[13px] md:text-sm whitespace-pre-wrap leading-relaxed ${msg.role === 'user' ? 'bg-slate-800 text-white rounded-tr-sm' : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'}`}>{msg.text}</div>
+                  <div className={`max-w-[90%] md:max-w-[80%] p-3.5 md:p-4 rounded-2xl shadow-sm text-[13px] md:text-sm whitespace-pre-wrap leading-relaxed ${
+                      msg.role === 'user' 
+                      ? 'bg-slate-800 text-white rounded-tr-sm' 
+                      : msg.text.startsWith('⚠️') 
+                         ? 'bg-amber-50 border border-amber-200 text-amber-800 rounded-tl-sm'
+                         : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm'
+                  }`}>
+                      {msg.text.startsWith('⚠️') && <AlertTriangle className="inline-block w-4 h-4 mr-2 -mt-0.5" />}
+                      {msg.text}
+                  </div>
                 </div>
               ))}
               {loading && <div className="flex w-full justify-start"><div className="bg-white border border-slate-200 p-3 md:p-4 rounded-2xl rounded-tl-sm shadow-sm flex items-center space-x-2"><Loader2 className="w-4 h-4 animate-spin text-slate-400" /><span className="text-xs text-slate-400">Processing...</span></div></div>}
