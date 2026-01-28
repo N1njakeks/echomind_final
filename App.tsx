@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus, fetchApiKey, storeUserProvidedApiKey } from './services/supabase';
 import { generateAnswer, generateEmbedding, setGeminiApiKey } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
+import { extractTextFromDocx, extractTextFromPptx } from './services/office';
 import { SourceFile, ChatMessage, ChatSession } from './types';
 import SettingsModal from './components/SettingsModal';
 import QuestionnaireModal from './components/QuestionnaireModal';
@@ -153,6 +154,11 @@ export default function App() {
   const hasV2 = chatSessions.some(s => s.mode === 'reflective');
   const sessionLimitReached = hasV1 && hasV2;
 
+  // HELPER: Calculate valid AI responses
+  const getValidAiCount = (msgs: ChatMessage[]) => {
+    return msgs.filter(m => m.role === 'model' && !m.text.startsWith('[ERROR]')).length;
+  };
+
   useEffect(() => {
     const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -285,23 +291,49 @@ export default function App() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
     setUploading(true);
     try {
-      let content = '', type = 'text', pageCount = 1;
-      if (file.type === 'application/pdf') {
+      let content = '';
+      let type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video' = 'text'; 
+      let pageCount = 1;
+      
+      const fileName = file.name.toLowerCase();
+
+      if (fileName.endsWith('.pdf')) {
         type = 'pdf';
         const pdfData = await extractTextFromPdf(file);
         content = pdfData.text;
         pageCount = pdfData.pageCount;
-      } else content = await file.text();
+      } else if (fileName.endsWith('.docx')) {
+        type = 'text'; // Treating word content as text
+        const docResult = await extractTextFromDocx(file);
+        content = docResult.text;
+        pageCount = docResult.pageCount;
+      } else if (fileName.endsWith('.pptx')) {
+        type = 'text'; // Treating slides as text
+        const pptResult = await extractTextFromPptx(file);
+        content = pptResult.text;
+        pageCount = pptResult.pageCount;
+      } else {
+        // Fallback for txt, md, json
+        content = await file.text();
+      }
+
       await saveDocumentToCloud(file.name, content, type, pageCount);
+      
       if (session?.user?.id) {
           // Refresh docs only
           const docs = await fetchUserDocuments(session.user.id);
           setDocuments(docs);
       }
-    } catch (err) { console.error("Upload failed", err); }
-    finally { setUploading(false); e.target.value = ''; }
+    } catch (err) { 
+        console.error("Upload failed", err);
+        alert("Upload failed: " + (err as Error).message);
+    } finally { 
+        setUploading(false); 
+        e.target.value = ''; 
+    }
   };
 
   const handleDeleteDocument = async (e: React.MouseEvent, id: string) => {
@@ -434,8 +466,8 @@ export default function App() {
         return;
     }
 
-    const userMsgCount = messages.filter(m => m.role === 'user').length;
-    if (userMsgCount >= MAX_MESSAGES_PER_SESSION) return;
+    // Check current session limit
+    if (getValidAiCount(messages) >= MAX_MESSAGES_PER_SESSION) return;
     
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: textToUse, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
     const newMessages = [...messages, userMsg];
@@ -448,27 +480,39 @@ export default function App() {
       const selectedDocs = documents.filter(d => d.isSelected);
       
       let context = "";
+      // NOTE: embeddings disabled, so we rely on selected docs or skip RAG
       if (selectedDocs.length > 0) {
           context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
-      } else {
-         const similar = await findSimilarDocuments(await generateEmbedding(textToUse));
-         context = similar.map((d: any) => `Document: ${d.title}\nContent: ${d.content}`).join("\n\n");
-      }
+      } 
+      // Fallback: If no docs selected, context is empty (Standard Chat)
+      // We removed findSimilarDocuments call because it depends on embeddings which are now disabled.
 
       const aiResponseText = await generateAnswer(context, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
       const aiMsg: ChatMessage = { id: crypto.randomUUID(), role: 'model', text: aiResponseText, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
       
-      setMessages(prev => [...prev, aiMsg]);
+      const updatedMessagesWithAi = [...newMessages, aiMsg];
+      setMessages(updatedMessagesWithAi);
       await saveChatMessage(currentSessionId, aiMsg);
 
-      // --- STUDY TRIGGER LOGIC ---
-      const updatedUserCount = newMessages.filter(m => m.role === 'user').length;
-      if (updatedUserCount >= MAX_MESSAGES_PER_SESSION) {
-         if (hasV1 && hasV2) {
-             if (!surveyStatus.post) {
-                 setTimeout(() => {
-                     setQuestionnaireType('post');
-                 }, 1500);
+      // --- STUDY TRIGGER LOGIC (Revised: Both sessions must finish) ---
+      const currentValidCount = getValidAiCount(updatedMessagesWithAi);
+      
+      if (hasV1 && hasV2 && !surveyStatus.post) {
+         if (currentValidCount >= MAX_MESSAGES_PER_SESSION) {
+             // Current session is done. Check the OTHER session.
+             // We can find the other session ID from the chatSessions list
+             const otherSession = chatSessions.find(s => s.id !== currentSessionId);
+             
+             if (otherSession) {
+                 // Fetch messages for the other session to verify count
+                 const otherMsgs = await fetchChatMessages(otherSession.id);
+                 const otherCount = getValidAiCount(otherMsgs);
+                 
+                 if (otherCount >= MAX_MESSAGES_PER_SESSION) {
+                     setTimeout(() => {
+                         setQuestionnaireType('post');
+                     }, 1500);
+                 }
              }
          }
       }
@@ -485,8 +529,10 @@ export default function App() {
 
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
   const isSessionLocked = !!currentSessionId;
-  const userMessageCount = messages.filter(m => m.role === 'user').length;
-  const isLimitReached = userMessageCount >= MAX_MESSAGES_PER_SESSION;
+  
+  // NEW: Calculate counts based on AI responses
+  const validAiCount = getValidAiCount(messages);
+  const isLimitReached = validAiCount >= MAX_MESSAGES_PER_SESSION;
 
   const displayMode = currentSessionId ? chatMode : selectedMode;
 
@@ -504,6 +550,7 @@ export default function App() {
         </div>
 
         {/* --- SIDEBAR CONTENT --- */}
+        {/* Changed flex-1 to flex-[2] or similar to give more space to Knowledge */}
         <div className="flex-1 flex flex-col min-h-0 border-b border-slate-100 relative">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -511,7 +558,7 @@ export default function App() {
                  </div>
                  <label className="cursor-pointer p-1 hover:bg-slate-200 rounded text-slate-400 transition-colors" title="Upload">
                     {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                    <input type="file" className="hidden" accept=".pdf,.txt,.md,.json" onChange={handleFileUpload} />
+                    <input type="file" className="hidden" accept=".pdf,.txt,.md,.json,.docx,.pptx" onChange={handleFileUpload} />
                  </label>
             </div>
             
@@ -549,7 +596,8 @@ export default function App() {
             </div>
         </div>
 
-        <div className="flex-1 flex flex-col min-h-0 bg-slate-50/30">
+        {/* Changed flex-1 to shrink-0 and max-h to force it down */}
+        <div className="shrink-0 h-auto max-h-[30%] flex flex-col min-h-0 bg-slate-50/30">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
                     <HistoryIcon className="w-3.5 h-3.5 mr-1.5" /> History
@@ -566,9 +614,8 @@ export default function App() {
             
             <div className="flex-1 overflow-y-auto px-2 py-2">
               {chatSessions.length === 0 && (
-                 <div className="flex flex-col items-center justify-center h-20 text-slate-400 px-4 text-center">
-                    <span className="text-xs">No sessions yet.</span>
-                    <span className="text-[10px] mt-1 text-amber-500">Create 1x V1 & 1x V2</span>
+                 <div className="flex flex-col items-center justify-center h-12 text-slate-400 px-4 text-center">
+                    <span className="text-[10px] text-amber-500">Create 1x V1 & 1x V2</span>
                  </div>
               )}
               {chatSessions.map(session => (
@@ -578,7 +625,7 @@ export default function App() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className={`text-xs md:text-sm font-medium truncate ${currentSessionId === session.id ? 'text-slate-900' : 'text-slate-700'}`}>{session.title || "Untitled"}</p>
-                    <p className="text-[10px] text-slate-400 uppercase tracking-widest">{session.mode === 'reflective' ? 'V2' : 'V1'}</p>
+                    <p className="text-[10px] text-slate-700">{session.mode === 'reflective' ? 'V2' : 'V1'}</p>
                   </div>
                   <button onClick={(e) => handleDeleteChat(e, session.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
@@ -599,7 +646,7 @@ export default function App() {
                 {currentSessionId && (
                   <>
                     <span className="text-slate-300">|</span>
-                    <span className={isLimitReached ? "text-red-500" : ""}>{userMessageCount} / {MAX_MESSAGES_PER_SESSION}</span>
+                    <span className={isLimitReached ? "text-red-500" : ""}>{validAiCount} / {MAX_MESSAGES_PER_SESSION}</span>
                   </>
                 )}
               </div>
@@ -688,8 +735,8 @@ export default function App() {
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
-           <div onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm w-full" onClick={() => setShowSettings(false)}>
+           <div onClick={e => e.stopPropagation()} className="w-full flex justify-center px-4">
                 <SettingsModal 
                     onClose={() => setShowSettings(false)} 
                     onApiKeyUpdate={handleSettingsKeyUpdate} 

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { generateEmbedding } from './gemini'; 
+// generateEmbedding import removed to prevent usage
+// import { generateEmbedding } from './gemini'; 
 
 // Environment Variables
 const viteEnv = (import.meta as any).env;
@@ -105,15 +106,8 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("User not authenticated");
 
-  let embedding = null;
-  // REMOVED: Summary generation logic
-
-  try {
-      // 1. Generate Embedding only
-      if (content.length > 50) {
-          embedding = await generateEmbedding(content);
-      }
-  } catch (e) { console.warn("AI Processing failed", e); }
+  // DISABLE EMBEDDINGS to save quota for Chat
+  const embedding = null; 
 
   const { data, error } = await supabase
     .from('documents')
@@ -123,7 +117,6 @@ export const saveDocumentToCloud = async (title: string, content: string, type: 
         content, 
         type, 
         embedding, 
-        // summary: "", // Removed summary field from insert
         is_read: false 
     }])
     .select()
@@ -207,34 +200,8 @@ export const deleteDocument = async (id: string) => {
 };
 
 export const findSimilarDocuments = async (embedding: number[]) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
-
-    const { data, error } = await supabase.rpc('match_documents', {
-        query_embedding: embedding,
-        match_threshold: 0.5, 
-        match_count: 5,
-        filter_user_id: user.id
-    });
-
-    if (error || !data) return [];
-    
-    const ids = data.map((d: any) => d.id);
-    if (ids.length === 0) return [];
-
-    const { data: docs } = await supabase
-        .from('documents')
-        .select('id, title, content, type, created_at') 
-        .in('id', ids);
-
-    return (docs || []).map((doc: any) => ({
-        id: doc.id,
-        title: doc.title,
-        content: doc.content,
-        type: doc.type,
-        createdAt: new Date(doc.created_at).getTime(),
-        pageCount: 1
-    }));
+    // RAG disabled because embeddings are disabled
+    return [];
 };
 
 export const createChatSession = async (title: string, sourceIds: string[], mode: 'standard' | 'reflective') => {

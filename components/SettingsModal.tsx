@@ -85,7 +85,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, onApiKeyUpdate }
   };
 
   return (
-    <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden mx-4 animate-in zoom-in-95 duration-200 flex flex-col h-[600px] md:h-auto">
+    <div className="bg-white w-[90vw] md:w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col min-h-[500px] h-auto mx-auto">
       {/* Header */}
       <div className="p-6 border-b border-slate-100 bg-slate-50/50">
         <h3 className="font-bold text-xl text-slate-800">Settings</h3>
