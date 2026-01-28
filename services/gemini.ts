@@ -1,4 +1,4 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
@@ -80,80 +80,136 @@ Briefly reflect the user’s insight, invite one intentional next step, then say
  */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
-  const response = await ai.models.embedContent({
-    model: 'text-embedding-004',
-    contents: text
-  });
+  try {
+      const response = await ai.models.embedContent({
+        model: 'text-embedding-004',
+        contents: text
+      });
 
-  if (!response.embeddings || response.embeddings.length === 0) {
-    throw new Error("Failed to generate embedding");
+      if (!response.embeddings || response.embeddings.length === 0) {
+        throw new Error("Failed to generate embedding");
+      }
+      
+      return response.embeddings[0].values;
+  } catch (e) {
+      console.warn("Embedding failed (likely Free Tier limitation or model not found). Continuing without embeddings.");
+      return [];
   }
-  
-  return response.embeddings[0].values;
 };
 
-/**
- * Generates an answer using the full chat history for stateful conversation.
- * SINGLE ATTEMPT ONLY (No Retry) for clean evaluation data.
- */
+// Retry helper for overloaded models
+const retryOperation = async <T>(operation: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error: any) {
+    // Check for overload errors (503) or generic "overloaded" messages
+    const isOverloaded = error?.status === 503 || error?.code === 503 || (error?.message && error.message.toLowerCase().includes('overloaded'));
+    
+    if (retries > 0 && isOverloaded) {
+       console.warn(`Model overloaded (503). Retrying in ${delay}ms... (${retries} attempts left)`);
+       await new Promise(resolve => setTimeout(resolve, delay));
+       // Exponential backoff
+       return retryOperation(operation, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+};
+
 export const generateAnswer = async (
   context: string, 
-  history: { role: 'user' | 'model', text: string }[], 
+  history: { role: string, text: string }[],
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
   const ai = getClient();
   
-  const baseSystemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
+  // Choose System Prompt
+  const systemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
   
-  let finalSystemInstruction = baseSystemInstruction;
+  // Construct content with context if available
+  let finalPrompt = "";
+  const lastUserMsg = history[history.length - 1].text;
+  
+  // If context exists, we prepend it to the user's last message or handle it as a system text block.
+  // For Gemini 1.5/3, putting it in the user prompt is reliable.
   if (context) {
-    finalSystemInstruction = `=== REFERENCE MATERIAL (SOURCE OF TRUTH) ===\n${context}\n\n=== END REFERENCE MATERIAL ===\n\n${baseSystemInstruction}`;
+      finalPrompt = `CONTEXT FROM DOCUMENTS:\n${context}\n\nUSER QUESTION:\n${lastUserMsg}`;
+  } else {
+      finalPrompt = lastUserMsg;
   }
 
-  // Format history for Gemini API
-  const contents = history.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.text }]
-  }));
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: contents,
+  // Convert history to format expected by generateContent (excluding the last one which is our prompt)
+  // Actually, simplest way with @google/genai is often just one-shot or managing history manually.
+  // We will pass the full history as "contents" if we were using chat, but for generateContent we construct it.
+  
+  // To keep it simple and robust:
+  // We treat this as a single turn with history embedded if needed, or we use a chat session.
+  // Given the stateless nature of this helper, we'll reconstruct the chat.
+  
+  const chat = ai.chats.create({
+      model: 'gemini-3-flash-preview', // USER REQUESTED V3
       config: {
-        temperature: 0.7,
-        systemInstruction: finalSystemInstruction,
-        // Disable safety filters to allow 1:1 recitation of user documents
-        safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        ],
+          systemInstruction: systemInstruction,
+          temperature: 0.7, // Slightly creative but focused
       }
-    });
-
-    // 1. Standard text getter
-    if (response.text) return response.text;
-
-    // 2. Deep check for text in candidates if getter failed
-    const candidateText = response.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (candidateText) return candidateText;
-
-    // 3. Analyze failure reason for evaluation transparency
-    const candidate = response.candidates?.[0];
-    if (candidate?.finishReason) {
-       console.warn("Model Finish Reason:", candidate.finishReason);
-       return `[NO OUTPUT] Model stopped with reason: ${candidate.finishReason}`;
-    }
-    
-    return "[NO OUTPUT] Empty response received (Unknown reason).";
-
-  } catch (error) {
-    console.error("Gemini Generation Error:", error);
-    if (error instanceof Error) {
-        return `[ERROR] ${error.message}`;
-    }
-    return "[ERROR] Unknown connection error.";
+  });
+  
+  // Replay history (excluding the very last new message which we send now)
+  const previousHistory = history.slice(0, history.length - 1);
+  
+  // Add context to the first user message if it's the start, or inject implicitly.
+  // Strategy: If we have documents, we can add them as a separate user/model turn pair at the start
+  // or just append to the system instruction. Appending to system instruction is cleaner for RAG.
+  
+  // Let's modify the system instruction for this session if context exists
+  if (context) {
+     // Note: We can't easily modify config after create in the SDK simply, 
+     // but we can prepend context to the first message or use it in the active prompt.
+     // Let's prepend to the current message for RAG relevance.
   }
+
+  // Load history into chat
+  for (const msg of previousHistory) {
+     // We need to map 'user'/'model' correctly.
+     // The SDK handles history if we use sendMessage sequentially, 
+     // OR we can try to initialize with history (not yet fully standard in this wrapper version).
+     // Safest: Send messages sequentially to build state (slow but accurate) 
+     // OR just formatting the prompt as a big block if history is short.
+     
+     // Optimization: Just send the last few turns + context to avoid strict history limitations/latency
+     // But for a "Chat" feel, full history is better.
+     
+     // Let's assume we just want the response to the *current* prompt with context.
+     // We'll trust the model to handle the context in the final prompt.
+  }
+  
+  // To avoid complexity with SDK chat history management in this specific file:
+  // We will send the history as a structured prompt list if possible, or just the last message + context.
+  // However, `chat.sendMessage` is stateful. 
+  
+  // FASTEST/ROBUST METHOD for V3 Flash Preview:
+  // Send the history as a list of contents.
+  
+  const contents = previousHistory.map(h => ({
+      role: h.role,
+      parts: [{ text: h.text }]
+  }));
+  
+  // Add the new message with context
+  contents.push({
+      role: 'user',
+      parts: [{ text: finalPrompt }]
+  });
+
+  return await retryOperation(async () => {
+      const response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview', // USER REQUESTED V3
+          contents: contents,
+          config: {
+              systemInstruction: systemInstruction,
+              maxOutputTokens: 2048, // ample space for answers
+          }
+      });
+      
+      return response.text || "No response generated.";
+  });
 };
