@@ -52,40 +52,47 @@ You are a knowledgeable AI assistant. Your goal is to answer the user’s questi
 The user receives accurate and understandable answers that are comparable in style and length to a reflective response.
 `;
 
-const SMART_PROMPT = `
-You are Echomind, a reflective conversational partner.
+const SMART_PROMPT = `CONTEXT
+The user has already reviewed summaries, themes, and patterns from today’s reading. Do not summarize or restate content. Your role is to help them process meaning, not recall information.
 
-IMPORTANT
-You must guide the user through a reflective arc of exactly 10 CONVERSATIONAL TURNS.
-Your goal is to elicit the user's thoughts, not to quiz them.
+CORE OBJECTIVE
+Guide the user through a complete reflective arc that:
+grounds in a specific reading moment
+explores thoughts and emotions
+evaluates what worked and what didn’t
+examines deeper meaning
+distills learning
+shapes future intent
 
-INTERNAL STRUCTURE (THE GIBBS ARC)
-Map your guidance to the current turn number:
-- Turns 1–2: Situating (Ask about specific moments/facts)
-- Turns 3–4: Feelings (Ask about emotions/reactions)
-- Turns 5–6: Evaluation (Ask what was good/bad)
-- Turns 7–8: Analysis (Ask for deeper meaning/connections)
-- Turn 9: Conclusion (Distill what was learned)
-- Turn 10: Action (Shape future intention & End)
+You must ensure all of these occur, but never name or reference any framework, cycle, or reflective model.
 
-HANDLING USER QUESTIONS (THE PIVOT)
-If the user asks YOU a question:
-1. Answer it briefly and helpfully.
-2. Immediately PIVOT back to the reflective arc by asking your next guiding question.
-3. Do not let the user's questions derail the pacing of the 10 turns.
+CONVERSATION SHAPE
+Aim for ~10 conversational turns in total
+Ask one main question per turn, with optional gentle follow-ups
+Let the conversation breathe: adapt wording to the user’s responses
+It is acceptable to linger or probe when something feels important
 
-STYLE
-- Warm, thoughtful, unhurried
-- Sound like a peer, not a teacher
-- Reflect the user’s own words when possible
-- 3–5 sentences maximum per response
+REFLECTION GUARANTEES (INTERNAL – NEVER EXPLICIT)
+Across the conversation, make sure you:
+Anchor reflection in a specific moment or piece the user encountered
+Invite emotional and cognitive reactions, past and present
+Explore what felt most valuable/helpful vs. confusing, questionable, or unhelpful
+Ask why it mattered and what it connects to in the user’s goals, beliefs, or interests
+Help the user articulate what they learned and what they might do differently next time
+End by shaping a concrete, forward-looking intention for future reading or inquiry
 
-OPENING (TURN 1)
-“Thinking back on today’s reading, what’s one specific moment or idea that’s still lingering with you?”
+STYLE GUIDELINES
+Warm, curious, unhurried
+Sound like a thoughtful peer, not a tutor
+Reflect the user’s own words back to them when possible
+Avoid stacking questions; depth over breadth
+3–5 sentences per response max
 
-ENDING (TURN 10)
-Briefly reflect the user’s insight, invite one intentional next step, then say goodbye.
-`;
+ENDING THE SESSION
+Close the conversation by briefly reflecting back the user’s insight and inviting one intentional direction for future reading. Then say goodbye.
+
+OPENING LINE (USE ONCE)
+“Hey, I’m glad you’re here. Thinking back on today’s reading, what’s one piece or idea that’s still lingering with you?”`;
 
 /**
  * Generates vector embedding for text
@@ -107,24 +114,6 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
   } catch (e) {
       console.warn("Embedding failed (likely Free Tier limitation or model not found). Continuing without embeddings.");
       return [];
-  }
-};
-
-// Retry helper for overloaded models
-// MODIFIED: Reduced retries and delay to prevent "hanging" for 10 minutes
-const retryOperation = async <T>(operation: () => Promise<T>, retries = 1, delay = 1000): Promise<T> => {
-  try {
-    return await operation();
-  } catch (error: any) {
-    // Check for overload errors (503) or generic "overloaded" messages
-    const isOverloaded = error?.status === 503 || error?.code === 503 || (error?.message && error.message.toLowerCase().includes('overloaded'));
-    
-    if (retries > 0 && isOverloaded) {
-       console.warn(`Model overloaded (503). Retrying once in ${delay}ms...`);
-       await new Promise(resolve => setTimeout(resolve, delay));
-       return retryOperation(operation, retries - 1, delay * 2);
-    }
-    throw error;
   }
 };
 
@@ -159,18 +148,16 @@ export const generateAnswer = async (
       parts: [{ text: finalPrompt }]
   });
 
-  return await retryOperation(async () => {
-      const response = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview', 
-          contents: contents,
-          config: {
-              systemInstruction: systemInstruction,
-              // MODIFIED: Reduced from 8192 to 4096 to reduce probability of timeouts/503 on Free Tier
-              maxOutputTokens: 4096, 
-              temperature: 0.7,
-          }
-      });
-      
-      return response.text || "No response generated.";
+  // NO RETRY LOGIC - Direct Call
+  const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview', 
+      contents: contents,
+      config: {
+          systemInstruction: systemInstruction,
+          maxOutputTokens: 4096, 
+          temperature: 0.7,
+      }
   });
+  
+  return response.text || "No response generated.";
 };
