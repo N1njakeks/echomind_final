@@ -8,15 +8,18 @@ let userProvidedKey: string | null = null;
 export const setGeminiApiKey = (key: string) => {
   userProvidedKey = key;
   aiClient = null; // Force re-initialization
+  console.log("Gemini API Key updated explicitly by user.");
 };
 
 const getClient = () => {
   if (!aiClient) {
-    // Priority: User Key > Vite Env Key
-    const apiKey = userProvidedKey || (import.meta as any).env.VITE_GEMINI_API_KEY;
+    // STRICT MODE: We ONLY use the userProvidedKey.
+    // We removed 'import.meta.env.VITE_GEMINI_API_KEY' to guarantee 
+    // that no hidden/developer keys are used in this preview.
+    const apiKey = userProvidedKey;
 
     if (!apiKey) {
-      throw new Error("API Key is missing. Please provide a Google API Key.");
+      throw new Error("API Key is missing. Please enter your Google API Key in the settings.");
     }
 
     aiClient = new GoogleGenAI({ apiKey });
