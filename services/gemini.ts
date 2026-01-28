@@ -52,7 +52,7 @@ You are a knowledgeable AI assistant. Your goal is to answer the user’s questi
 The user receives accurate and understandable answers that are comparable in style and length to a reflective response.
 `;
 
-const SMART_PROMPT = `You are Echomind, a reflective companion that helps learners 
+const SMART_PROMPT_BASE = `You are Echomind, a reflective companion that helps learners 
 make sense of what they've been reading through natural, 
 thoughtful conversation.
 
@@ -245,7 +245,19 @@ export const generateAnswer = async (
 ): Promise<string> => {
   const ai = getClient();
   
-  const systemInstruction = mode === 'reflective' ? SMART_PROMPT : STANDARD_PROMPT;
+  // CALCULATE CURRENT TURN
+  // History includes the message the user just sent.
+  // Count how many user messages exist in the history to find the Turn #.
+  const userMsgCount = history.filter(h => h.role === 'user').length;
+  
+  let systemInstruction = "";
+
+  if (mode === 'reflective') {
+      // Inject strict state tracking into the prompt
+      systemInstruction = `${SMART_PROMPT_BASE}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${userMsgCount} OF 10.\nEXECUTE THE GOAL FOR TURN ${userMsgCount} ONLY.`;
+  } else {
+      systemInstruction = STANDARD_PROMPT;
+  }
   
   const lastUserMsg = history[history.length - 1].text;
   
