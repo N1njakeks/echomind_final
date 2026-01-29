@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
+const OPENING_LINE = "Hey, I'm glad you're here. Thinking back on today's reading, what's one piece or idea that's still lingering with you?";
 
 // --- Initial Loader Component ---
 const InitialLoader = () => (
@@ -390,7 +391,12 @@ export default function App() {
         return;
     }
 
-    // 2. Check Docs (Optional check currently disabled to allow general chat)
+    // 2. Check Docs (STRICT)
+    const selectedFiles = documents.filter(d => d.isSelected);
+    if (selectedFiles.length === 0) {
+        alert("Please select at least one document from the Knowledge base to start a session.");
+        return;
+    }
 
     // 3. Check Pre-Survey
     if (!surveyStatus.pre) {
@@ -405,7 +411,6 @@ export default function App() {
     }
 
     // 5. Create Session
-    const selectedFiles = documents.filter(d => d.isSelected);
     initiateNewStudySession(selectedFiles);
   };
 
@@ -415,7 +420,17 @@ export default function App() {
     if (modeToCreate === 'standard' && hasV1) modeToCreate = 'reflective';
     if (modeToCreate === 'reflective' && hasV2) modeToCreate = 'standard';
     
-    setMessages([]);
+    // START WITH AI OPENING MESSAGE
+    // This simulates Turn 1 (Opening) instantly.
+    const initialAiMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'model',
+        text: OPENING_LINE,
+        timestamp: Date.now(),
+        isThinking: modeToCreate === 'reflective'
+    };
+    
+    setMessages([initialAiMsg]);
     
     try {
       const sourceIds = selectedFiles.map(d => d.id);
@@ -424,6 +439,9 @@ export default function App() {
       
       setCurrentSessionId(sessionData.id);
       setChatMode(modeToCreate);
+      
+      // Save the initial AI message to DB
+      await saveChatMessage(sessionData.id, initialAiMsg);
       
       if (session?.user?.id) {
         const updatedSessions = await fetchChatSessions(session.user.id);
@@ -462,11 +480,8 @@ export default function App() {
       // 3. If we were trying to start a session, retry now
       if (!currentSessionId && !sessionLimitReached) {
            const selectedFiles = documents.filter(d => d.isSelected);
-           // Only auto-start if we are on the new session screen. 
-           // Simplest heuristic: check if we are not in a session.
-           if (messages.length === 0) {
-               // Optional: Check if user actually clicked start before? 
-               // For now, let's assume if they just finished the flow, they want to start.
+           if (messages.length === 0 && selectedFiles.length > 0) {
+               // Only auto-start if valid
                initiateNewStudySession(selectedFiles);
            }
       }

@@ -284,7 +284,10 @@ export const generateAnswer = async (
   // CALCULATE CURRENT TURN
   // History includes the message the user just sent.
   // Count how many user messages exist in the history to find the Turn #.
+  // Since the AI now starts the conversation (Turn 1), when the user replies, 
+  // they have completed their part of Turn 1. The AI is now generating Turn 2.
   const userMsgCount = history.filter(h => h.role === 'user').length;
+  const currentTurn = userMsgCount + 1;
   
   let systemInstruction = "";
 
@@ -295,19 +298,19 @@ export const generateAnswer = async (
       systemInstruction = `${SMART_PROMPT_BASE}
       
 [SYSTEM RUNTIME OVERRIDE]
-CURRENT STATUS: YOU ARE STRICTLY AT TURN ${userMsgCount} OF 10.
+CURRENT STATUS: YOU ARE STRICTLY AT TURN ${currentTurn} OF 10.
 INSTRUCTION:
-1. Look at the "INTERNAL STRUCTURE" for Turn ${userMsgCount}. THAT is your goal.
-2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${userMsgCount} question to fit (e.g., ask what was missing instead of what they learned).
-3. If Turn ${userMsgCount} is 10, output the CLOSING SEQUENCE exactly and STOP.`;
+1. Look at the "INTERNAL STRUCTURE" for Turn ${currentTurn}. THAT is your goal.
+2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${currentTurn} question to fit (e.g., ask what was missing instead of what they learned).
+3. If Turn ${currentTurn} is 10, output the CLOSING SEQUENCE exactly and STOP.`;
 
   } else {
       // Inject simple state tracking for V1
-      systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${userMsgCount} OF 10.`;
+      systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
 
       // FIX FOR V1 (STANDARD MODE):
       // Add a strict runtime override for the final turn so it acts "smart" and stops.
-      if (userMsgCount >= 10) {
+      if (currentTurn >= 10) {
          systemInstruction += `\n\nCRITICAL OVERRIDE: This is Turn 10. DO NOT ask any new questions. Thank the user politely and STOP.`;
       }
   }
