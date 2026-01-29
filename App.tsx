@@ -420,6 +420,19 @@ export default function App() {
       
       setCurrentSessionId(sessionData.id);
       setChatMode(modeToCreate);
+
+      // AUTO-MESSAGE LOGIC: Insert the standard opening line immediately
+      const openingText = "Hey, I'm glad you're here. Thinking back on today's reading, what's one piece or idea that's still lingering with you?";
+      const initialMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'model',
+          text: openingText,
+          timestamp: Date.now(),
+          isThinking: false
+      };
+      
+      await saveChatMessage(sessionData.id, initialMsg);
+      setMessages([initialMsg]);
       
       if (session?.user?.id) {
         const updatedSessions = await fetchChatSessions(session.user.id);
