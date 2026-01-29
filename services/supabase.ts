@@ -249,8 +249,7 @@ export const fetchChatSessions = async (userId?: string) => {
         return {
             ...session,
             title,
-            mode: mode,
-            sourceIds: session.source_ids || [] // Map snake_case DB to camelCase Type
+            mode: mode
         };
     });
 };
