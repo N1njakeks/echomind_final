@@ -355,6 +355,12 @@ export default function App() {
   const toggleDocumentSelection = (id: string) => {
     setDocuments(prev => prev.map(doc => doc.id === id ? { ...doc, isSelected: !doc.isSelected } : doc));
   };
+  
+  const handleSelectAll = () => {
+    if (documents.length === 0) return;
+    const allSelected = documents.every(d => d.isSelected);
+    setDocuments(prev => prev.map(d => ({ ...d, isSelected: !allSelected })));
+  };
 
   const handleViewDocument = async (doc: SourceFile) => {
     setViewingDoc(doc);
@@ -572,10 +578,21 @@ export default function App() {
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
                     <Library className="w-3.5 h-3.5 mr-1.5" /> Knowledge
                  </div>
-                 <label className="cursor-pointer p-1 hover:bg-slate-200 rounded text-slate-400 transition-colors" title="Upload">
-                    {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                    <input type="file" className="hidden" accept=".pdf,.txt,.md,.json,.docx,.pptx" onChange={handleFileUpload} />
-                 </label>
+                 <div className="flex items-center">
+                    {documents.length > 0 && (
+                        <button
+                            onClick={handleSelectAll}
+                            className="p-1 hover:bg-slate-200 rounded text-slate-400 transition-colors mr-1"
+                            title={documents.every(d => d.isSelected) ? "Deselect All" : "Select All"}
+                        >
+                            {documents.every(d => d.isSelected) ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                        </button>
+                    )}
+                     <label className="cursor-pointer p-1 hover:bg-slate-200 rounded text-slate-400 transition-colors" title="Upload">
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        <input type="file" className="hidden" accept=".pdf,.txt,.md,.json,.docx,.pptx" onChange={handleFileUpload} />
+                     </label>
+                 </div>
             </div>
             
             <div className="flex-1 overflow-y-auto px-2 py-2">
