@@ -284,6 +284,17 @@ export default function App() {
     try {
       const msgs = await fetchChatMessages(sessionId);
       const session = chatSessions.find(s => s.id === sessionId);
+      
+      // Restore the document selection for this session
+      if (session) {
+          // If the session has sourceIds, select those docs. Otherwise deselect all.
+          const sessionSourceIds = session.sourceIds || [];
+          setDocuments(prevDocs => prevDocs.map(doc => ({
+              ...doc,
+              isSelected: sessionSourceIds.includes(doc.id)
+          })));
+      }
+
       setMessages(msgs);
       setCurrentSessionId(sessionId);
       if (session?.mode) setChatMode(session.mode);

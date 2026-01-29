@@ -249,7 +249,8 @@ export const fetchChatSessions = async (userId?: string) => {
         return {
             ...session,
             title,
-            mode: mode
+            mode: mode,
+            sourceIds: session.source_ids || [] // Added explicit mapping here
         };
     });
 };
