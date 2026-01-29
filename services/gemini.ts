@@ -304,6 +304,12 @@ INSTRUCTION:
   } else {
       // Inject simple state tracking for V1
       systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${userMsgCount} OF 10.`;
+
+      // FIX FOR V1 (STANDARD MODE):
+      // Add a strict runtime override for the final turn so it acts "smart" and stops.
+      if (userMsgCount >= 10) {
+         systemInstruction += `\n\nCRITICAL OVERRIDE: This is Turn 10. DO NOT ask any new questions. Thank the user politely and STOP.`;
+      }
   }
   
   const lastUserMsg = history[history.length - 1].text;
