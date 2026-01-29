@@ -252,6 +252,9 @@ export default function App() {
     setMessages([]);
     setCurrentSessionId(null);
     setIsSidebarOpen(false);
+    // Clear document selection when starting a fresh chat
+    setDocuments(prev => prev.map(d => ({ ...d, isSelected: false })));
+
     if (!hasV1) setSelectedMode('standard');
     else if (!hasV2) setSelectedMode('reflective');
   };
@@ -287,6 +290,18 @@ export default function App() {
       setMessages(msgs);
       setCurrentSessionId(sessionId);
       if (session?.mode) setChatMode(session.mode);
+
+      // Restore document selection state for this session
+      if (session && session.sourceIds) {
+          setDocuments(prevDocs => prevDocs.map(doc => ({
+              ...doc,
+              isSelected: session.sourceIds!.includes(doc.id)
+          })));
+      } else {
+          // If no sources attached to this session, deselect all to be safe
+          setDocuments(prevDocs => prevDocs.map(doc => ({ ...doc, isSelected: false })));
+      }
+
     } catch (e) {
       console.error("Failed to load session", e);
     } finally {
