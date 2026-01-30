@@ -658,7 +658,7 @@ export default function App() {
                   </button>
                   <div className="flex-1 min-w-0 flex items-center">
                       <p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p>
-                      {doc.geminiUri && <span title="AI Native Context"><Sparkles className="w-3 h-3 text-indigo-500 ml-1 shrink-0" /></span>}
+                      {/* Removed AI Sparkles Icon as requested */}
                   </div>
                   <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
@@ -685,7 +685,7 @@ export default function App() {
         <div className="shrink-0 h-auto max-h-[30%] flex flex-col min-h-0 bg-slate-50/30">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    <HistoryIcon className="w-3.5 h-3.5 mr-1.5" /> History
+                    <Library className="w-3.5 h-3.5 mr-1.5" /> History
                  </div>
                  <button 
                     onClick={handleNewChat}

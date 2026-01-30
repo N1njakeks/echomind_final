@@ -317,20 +317,16 @@ export const uploadFileToGemini = async (file: File, mimeType: string, docId: st
         const storeName = await getOrCreateFileSearchStore();
         
         if (storeName) {
-            let operation: any = await ai.fileSearchStores.importFile({
+            // FIX: Use createFile to add the specific file resource to the store.
+            // This avoids the 'importFile' polling loop error ("Operation name is required")
+            // because adding a single pre-uploaded file to a store is typically synchronous/immediate.
+            await (ai.fileSearchStores as any).createFile({
                 fileSearchStoreName: storeName,
-                fileName: fileName, 
-                config: {
-                    customMetadata: [{ key: "doc_id", stringValue: docId }]
+                file: {
+                    name: fileName, // The resource name 'files/...'
+                    customMetadata: { doc_id: docId }
                 }
             });
-            
-            // Poll for completion (fire and forget for UI speed, or await?)
-            // We await here to ensure it's ready for the chat immediately.
-            while (!operation.done) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                operation = await ai.operations.get({ operation: operation.name });
-            }
         }
     } catch (storeError) {
         // Log but do NOT throw. We have the URI, which is enough for Long Context fallback.
