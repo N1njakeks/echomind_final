@@ -354,7 +354,7 @@ INSTRUCTION:
     if (geminiDocs.length > 0) {
         console.log(`%c🚀 [Gemini] Using File URIs (Long Context) for ${geminiDocs.length} documents.`, "color: #10b981; font-weight: bold; font-size: 12px; border: 1px solid #10b981; padding: 4px; border-radius: 4px;");
     } else {
-        const reason = forceTextFallback ? "Fallback Triggered (URI Expired)" : "No URIs available";
+        const reason = forceTextFallback ? "Fallback Triggered (URI Expired or Server Error)" : "No URIs available";
         console.log(`%c📝 [Gemini] Using Text Content from DB (${reason}).`, "color: #f59e0b; font-weight: bold; font-size: 12px; border: 1px solid #f59e0b; padding: 4px; border-radius: 4px;");
     }
 
@@ -417,19 +417,21 @@ INSTRUCTION:
       return response.text || "No response generated.";
 
   } catch (error: any) {
-      const errMsg = error.message || "";
+      const errMsg = (error.message || "").toLowerCase();
       
-      // CHECK FOR EXPIRED FILES
-      // Common errors: "404 Not Found", "Permission denied", "InvalidArgument" regarding files
-      // If we encounter these, it likely means the 48h limit passed.
+      // CHECK FOR EXPIRED FILES OR SERVER ERRORS (Hybrid Request Failure)
+      // We now explicitly check for 500 and "internal" to catch the mixed content crash
       if (
-          errMsg.includes("Not Found") || 
-          errMsg.includes("Permission denied") || 
+          errMsg.includes("not found") || 
+          errMsg.includes("permission denied") || 
           errMsg.includes("404") ||
           errMsg.includes("403") ||
-          errMsg.includes("invalid argument") // Sometimes file ref errors show as invalid arg
+          errMsg.includes("invalid argument") ||
+          errMsg.includes("500") || // SERVER ERROR
+          errMsg.includes("internal") || // INTERNAL ERROR
+          errMsg.includes("overloaded")
       ) {
-          console.warn("⚠️ Gemini File URI likely expired or invalid. Falling back to pure text context from DB.");
+          console.warn(`⚠️ Gemini Error (${errMsg}). Falling back to pure text context from DB.`);
           
           // ATTEMPT 2: Fallback to Text Mode (Guaranteed Persistence)
           try {
