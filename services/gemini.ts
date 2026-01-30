@@ -350,6 +350,14 @@ INSTRUCTION:
     const geminiDocs = forceTextFallback ? [] : documents.filter(d => d.geminiUri);
     const textDocs = forceTextFallback ? documents : documents.filter(d => !d.geminiUri);
 
+    // --- CONSOLE LOGGING FOR DEBUGGING ---
+    if (geminiDocs.length > 0) {
+        console.log(`%c🚀 [Gemini] Using File URIs (Long Context) for ${geminiDocs.length} documents.`, "color: #10b981; font-weight: bold; font-size: 12px; border: 1px solid #10b981; padding: 4px; border-radius: 4px;");
+    } else {
+        const reason = forceTextFallback ? "Fallback Triggered (URI Expired)" : "No URIs available";
+        console.log(`%c📝 [Gemini] Using Text Content from DB (${reason}).`, "color: #f59e0b; font-weight: bold; font-size: 12px; border: 1px solid #f59e0b; padding: 4px; border-radius: 4px;");
+    }
+
     // PLAN: Long Context Window (Pass files directly)
     geminiDocs.forEach(d => {
         fileContextParts.push({
