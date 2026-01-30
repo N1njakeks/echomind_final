@@ -240,6 +240,7 @@ WHAT NOT TO DO
 •⁠  ⁠Do not make statements that sound like conclusions`;
 
 export const generateEmbedding = async (text: string): Promise<number[]> => {
+  // Kept for interface compatibility, but effectively unused if RAG is disabled
   const ai = getClient();
   try {
       const response = await ai.models.embedContent({
@@ -254,7 +255,7 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
 
 /**
  * Uploads a file to Gemini. 
- * Falls back to just returning the URI if Store Indexing fails.
+ * STRICTLY does NOT use FileSearch/RAG. Returns URI for Long Context Window usage.
  */
 export const uploadFileToGemini = async (file: File, mimeType: string, docId: string): Promise<string> => {
   const ai = getClient();
@@ -273,9 +274,6 @@ export const uploadFileToGemini = async (file: File, mimeType: string, docId: st
     const fileUri = uploadResult.uri || (uploadResult as any).file?.uri;
     
     if (!fileUri) throw new Error("Gemini Upload failed to return a valid URI.");
-
-    // NOTE: We do not add to FileSearchStore here to avoid browser SDK 'createFile' errors.
-    // Instead, we rely on the 1M+ Token Context Window of Gemini 1.5/2.5.
     
     return fileUri;
 
@@ -325,7 +323,7 @@ INSTRUCTION:
   const textDocs = documents.filter(d => !d.geminiUri);
 
   // PLAN: Long Context Window (Pass files directly)
-  // We use this exclusively now for robustness.
+  // We strictly use fileUri without any tools/retrieval configs
   geminiDocs.forEach(d => {
       fileContextParts.push({
           fileData: {
@@ -375,7 +373,7 @@ INSTRUCTION:
               systemInstruction: systemInstruction,
               maxOutputTokens: 4096, 
               temperature: 0.7,
-              // tools: undefined - Explicitly disabled RAG tools
+              // tools: [] -> REMOVED COMPLETELY to avoid "Invalid JSON payload... filter" error
           }
       });
       return response.text || "No response generated.";
