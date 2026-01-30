@@ -334,7 +334,7 @@ export default function App() {
       
       const fileName = file.name.toLowerCase();
 
-      // 1. Text Extraction (for UI Preview & Fallback)
+      // 1. Text Extraction
       if (fileName.endsWith('.pdf')) {
         type = 'pdf';
         const pdfData = await extractTextFromPdf(file);
@@ -346,23 +346,42 @@ export default function App() {
         const docResult = await extractTextFromDocx(file);
         content = docResult.text;
         pageCount = docResult.pageCount;
-        // Gemini File API doesn't support DOCX natively yet, so we stick to text fallback
+        // NOTE: We will treat extracted DOCX text as a "text/plain" file for Gemini
+        geminiMimeType = 'text/plain'; 
       } else if (fileName.endsWith('.pptx')) {
         type = 'text'; 
         const pptResult = await extractTextFromPptx(file);
         content = pptResult.text;
         pageCount = pptResult.pageCount;
+        // NOTE: We will treat extracted PPTX text as a "text/plain" file for Gemini
+        geminiMimeType = 'text/plain';
       } else {
         content = await file.text();
         geminiMimeType = 'text/plain'; // Simple text files
       }
 
-      // 2. Upload to Gemini (Long Context Window)
-      if ((type === 'pdf' || geminiMimeType === 'text/plain') && userApiKey) {
+      // 2. Upload to Gemini (Long Context Window Strategy)
+      // We now try to upload everything. 
+      // If it's a PDF, we upload the PDF file directly.
+      // If it's DOCX/PPTX, we create a virtual text file from the extracted content and upload that.
+      if (userApiKey) {
           try {
-             geminiUri = await uploadFileToGemini(file, geminiMimeType!, docId);
+             let fileToUpload = file;
+             
+             // UNIFIED UPLOAD: If it's not a PDF, but we have content (Word/PPTX), 
+             // create a virtual file object to upload the TEXT content to Gemini.
+             // This ensures Word docs also get a URI and usage of the Long Context Window.
+             if (type !== 'pdf' && content.length > 0) {
+                 const textBlob = new Blob([content], { type: 'text/plain' });
+                 fileToUpload = new File([textBlob], `${file.name}.txt`, { type: 'text/plain' });
+                 geminiMimeType = 'text/plain';
+             }
+
+             if (geminiMimeType) {
+                geminiUri = await uploadFileToGemini(fileToUpload, geminiMimeType, docId);
+             }
           } catch (uploadError) {
-             console.warn("Failed to upload to Gemini, falling back to text extraction only.", uploadError);
+             console.warn("Failed to upload to Gemini, falling back to pure text prompt.", uploadError);
              // Proceed without geminiUri
           }
       }
