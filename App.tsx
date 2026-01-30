@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus, fetchApiKey, storeUserProvidedApiKey } from './services/supabase';
-import { generateAnswer, generateEmbedding, setGeminiApiKey } from './services/gemini';
+import { generateAnswer, generateEmbedding, setGeminiApiKey, uploadFileToGemini } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { extractTextFromDocx, extractTextFromPptx } from './services/office';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -312,33 +312,52 @@ export default function App() {
     
     setUploading(true);
     try {
+      // 0. Prepare consistent ID
+      const docId = crypto.randomUUID();
+
       let content = '';
       let type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video' = 'text'; 
       let pageCount = 1;
+      let geminiUri = undefined;
+      let geminiMimeType = undefined;
       
       const fileName = file.name.toLowerCase();
 
+      // 1. Text Extraction (for UI Preview & Fallback)
       if (fileName.endsWith('.pdf')) {
         type = 'pdf';
         const pdfData = await extractTextFromPdf(file);
         content = pdfData.text;
         pageCount = pdfData.pageCount;
+        geminiMimeType = 'application/pdf';
       } else if (fileName.endsWith('.docx')) {
-        type = 'text'; // Treating word content as text
+        type = 'text'; 
         const docResult = await extractTextFromDocx(file);
         content = docResult.text;
         pageCount = docResult.pageCount;
+        // Gemini File API doesn't support DOCX natively yet, so we stick to text fallback
       } else if (fileName.endsWith('.pptx')) {
-        type = 'text'; // Treating slides as text
+        type = 'text'; 
         const pptResult = await extractTextFromPptx(file);
         content = pptResult.text;
         pageCount = pptResult.pageCount;
       } else {
-        // Fallback for txt, md, json
         content = await file.text();
+        geminiMimeType = 'text/plain'; // Simple text files
       }
 
-      await saveDocumentToCloud(file.name, content, type, pageCount);
+      // 2. Upload to Gemini File Search Store (RAG)
+      if ((type === 'pdf' || geminiMimeType === 'text/plain') && userApiKey) {
+          try {
+             geminiUri = await uploadFileToGemini(file, geminiMimeType!, docId);
+          } catch (uploadError) {
+             console.warn("Failed to upload to Gemini File Search, falling back to text extraction only.", uploadError);
+             // Proceed without geminiUri
+          }
+      }
+
+      // 3. Save to Cloud with explicit ID
+      await saveDocumentToCloud(docId, file.name, content, type, pageCount, geminiUri, geminiMimeType);
       
       if (session?.user?.id) {
           // Refresh docs only
@@ -516,15 +535,9 @@ export default function App() {
       await saveChatMessage(currentSessionId, userMsg);
       const selectedDocs = documents.filter(d => d.isSelected);
       
-      let context = "";
-      // NOTE: embeddings disabled, so we rely on selected docs or skip RAG
-      if (selectedDocs.length > 0) {
-          context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
-      } 
-      // Fallback: If no docs selected, context is empty (Standard Chat)
-      // We removed findSimilarDocuments call because it depends on embeddings which are now disabled.
-
-      const aiResponseText = await generateAnswer(context, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
+      // NOTE: generateAnswer will now prefer the Gemini File URI if it exists in the document object
+      // otherwise it falls back to the extracted text.
+      const aiResponseText = await generateAnswer(selectedDocs, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
       const aiMsg: ChatMessage = { id: crypto.randomUUID(), role: 'model', text: aiResponseText, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
       
       const updatedMessagesWithAi = [...newMessages, aiMsg];
@@ -631,7 +644,10 @@ export default function App() {
                   >
                     {doc.isSelected ? <CheckSquare className="w-4 h-4 text-slate-800" /> : <Square className="w-4 h-4" />}
                   </button>
-                  <div className="flex-1 min-w-0"><p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p></div>
+                  <div className="flex-1 min-w-0 flex items-center">
+                      <p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p>
+                      {doc.geminiUri && <Sparkles className="w-3 h-3 text-indigo-500 ml-1 shrink-0" title="AI Native Context" />}
+                  </div>
                   <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               ))}

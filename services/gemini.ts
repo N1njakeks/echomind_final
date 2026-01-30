@@ -1,14 +1,19 @@
 import { GoogleGenAI } from "@google/genai";
+import { SourceFile } from "../types";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
 let userProvidedKey: string | null = null;
+
+const STORE_DISPLAY_NAME = "Echomind Knowledge Base";
+let cachedStoreName: string | null = null;
 
 // Allow the app to set the key dynamically at runtime
 export const setGeminiApiKey = (key: string) => {
   if (key && key.startsWith("AIza")) {
     userProvidedKey = key;
     aiClient = null; // Force re-initialization
+    cachedStoreName = null; // Reset store cache
     console.log("Gemini Service: User API Key set successfully.");
   } else {
     console.warn("Gemini Service: Invalid key format ignored.");
@@ -34,6 +39,33 @@ const getClient = () => {
     aiClient = new GoogleGenAI({ apiKey });
   }
   return aiClient;
+};
+
+// --- Helper: Get or Create File Search Store ---
+const getOrCreateFileSearchStore = async (): Promise<string> => {
+    const ai = getClient();
+    if (cachedStoreName) return cachedStoreName;
+
+    try {
+        const listResp = await ai.fileSearchStores.list();
+        for await (const store of listResp) {
+             // Check both possible property locations depending on SDK version response shape
+            if ((store as any).displayName === STORE_DISPLAY_NAME || (store.config as any)?.displayName === STORE_DISPLAY_NAME) {
+                console.log(`Gemini: Found existing store ${store.name}`);
+                cachedStoreName = store.name;
+                return store.name;
+            }
+        }
+    } catch (e) {
+        console.warn("Gemini: Error listing stores, attempting creation...", e);
+    }
+
+    console.log("Gemini: Creating new File Search Store...");
+    const newStore = await ai.fileSearchStores.create({
+        config: { displayName: STORE_DISPLAY_NAME }
+    });
+    cachedStoreName = newStore.name;
+    return newStore.name;
 };
 
 // --- System Prompts ---
@@ -249,7 +281,6 @@ WHAT NOT TO DO
 export const generateEmbedding = async (text: string): Promise<number[]> => {
   const ai = getClient();
   try {
-      // Note: text-embedding-004 might not be available on free tier keys in some regions
       const response = await ai.models.embedContent({
         model: 'text-embedding-004',
         contents: text
@@ -261,30 +292,73 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
       
       return response.embeddings[0].values;
   } catch (e) {
-      console.warn("Embedding failed (likely Free Tier limitation or model not found). Continuing without embeddings.");
+      console.warn("Embedding failed. Continuing without embeddings.");
       return [];
   }
 };
 
+/**
+ * Uploads a file to Gemini File Search Store (RAG).
+ * 1. Uploads file to File API.
+ * 2. Imports file into the user's File Search Store with Metadata.
+ * 3. Returns the URI (though we mainly rely on Metadata for search).
+ */
+export const uploadFileToGemini = async (file: File, mimeType: string, docId: string): Promise<string> => {
+  const ai = getClient();
+  
+  try {
+    const storeName = await getOrCreateFileSearchStore();
+
+    // 1. Upload the raw file
+    console.log("Gemini: Uploading file...", file.name);
+    const uploadResult = await ai.files.upload({
+      file: file,
+      config: { 
+        mimeType: mimeType,
+        displayName: file.name
+      }
+    });
+
+    // 2. Import into Store with Metadata
+    console.log(`Gemini: Importing ${uploadResult.file.name} into store ${storeName}...`);
+    let operation = await ai.fileSearchStores.importFile({
+        fileSearchStoreName: storeName,
+        fileName: uploadResult.file.name, // Resource name from step 1
+        config: {
+            customMetadata: [{ key: "doc_id", stringValue: docId }]
+        }
+    });
+
+    // 3. Poll for completion
+    console.log("Gemini: Indexing...");
+    while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        operation = await ai.operations.get({ name: operation.name });
+    }
+    
+    console.log("Gemini: Indexing Complete.");
+    return uploadResult.file.uri;
+
+  } catch (error) {
+    console.error("Gemini File Search Upload Failed:", error);
+    throw error;
+  }
+};
+
 export const generateAnswer = async (
-  context: string, 
+  documents: SourceFile[],
   history: { role: string, text: string }[],
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
   const ai = getClient();
   
   // CALCULATE CURRENT TURN
-  // Count how many model messages exist in the history to find the Turn #.
-  // We add 1 because we are about to generate the NEXT model message.
   const modelMsgCount = history.filter(h => h.role === 'model').length;
   const currentTurn = modelMsgCount + 1;
   
   let systemInstruction = "";
 
   if (mode === 'reflective') {
-      // DYNAMIC INJECTION:
-      // We append a high-priority runtime instruction that tells the model EXACTLY where it is
-      // and how to handle the "Robotic Response" issue without changing the base prompt.
       systemInstruction = `${SMART_PROMPT_BASE}
       
 [SYSTEM RUNTIME OVERRIDE]
@@ -295,48 +369,99 @@ INSTRUCTION:
 3. If Turn ${currentTurn} is 10, output the CLOSING SEQUENCE exactly and STOP.`;
 
   } else {
-      // Inject simple state tracking for V1
       systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
 
-      // FIX FOR V1 (STANDARD MODE):
-      // Add a strict runtime override for the final turn so it acts "smart" and stops.
       if (currentTurn >= 10) {
          systemInstruction += `\n\nCRITICAL OVERRIDE: This is Turn 10. DO NOT ask any new questions. Thank the user politely and STOP.`;
       }
   }
   
   const lastUserMsg = history[history.length - 1].text;
-  
-  let finalPrompt = "";
-  
-  if (context) {
-      finalPrompt = `CONTEXT FROM DOCUMENTS:\n${context}\n\nUSER QUESTION:\n${lastUserMsg}`;
-  } else {
-      finalPrompt = lastUserMsg;
-  }
-
   const previousHistory = history.slice(0, history.length - 1);
   
+  // RAG / Tool Config
+  const tools: any[] = [];
+  const textContextParts: string[] = [];
+
+  // Separate indexed (RAG) docs from fallback (Text) docs
+  const indexedDocs = documents.filter(d => d.geminiUri);
+  const textDocs = documents.filter(d => !d.geminiUri);
+
+  // A. Configure File Search Tool
+  if (indexedDocs.length > 0) {
+      const storeName = await getOrCreateFileSearchStore();
+      
+      // Construct Metadata Filter: doc_id = "A" OR doc_id = "B"
+      const filter = indexedDocs.map(d => `doc_id = "${d.id}"`).join(" OR ");
+      
+      tools.push({
+          fileSearch: {
+              fileSearchStoreNames: [storeName],
+              filter: filter // Using 'filter' as per AIP/160 syntax (custom metadata key needs mapping? usually implicit for custom keys in Gemini API)
+              // If simple filter fails, Gemini defaults to searching whole store, which is acceptable fallback.
+          }
+      });
+  }
+
+  // B. Construct Text Fallback
+  if (textDocs.length > 0) {
+      const fallbackText = textDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+      textContextParts.push(`ADDITIONAL CONTEXT (Non-Indexed Files):\n${fallbackText}`);
+  }
+
+  // Construct Content
   const contents = previousHistory.map(h => ({
       role: h.role,
       parts: [{ text: h.text }]
   }));
   
+  const finalUserParts: any[] = [];
+  if (textContextParts.length > 0) {
+      finalUserParts.push({ text: textContextParts.join("\n") });
+  }
+  finalUserParts.push({ text: lastUserMsg });
+
   contents.push({
       role: 'user',
-      parts: [{ text: finalPrompt }]
+      parts: finalUserParts
   });
 
-  // NO RETRY LOGIC - Direct Call
-  const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash', 
-      contents: contents,
-      config: {
-          systemInstruction: systemInstruction,
-          maxOutputTokens: 4096, 
-          temperature: 0.7,
+  try {
+      const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash', 
+          contents: contents,
+          config: {
+              systemInstruction: systemInstruction,
+              maxOutputTokens: 4096, 
+              temperature: 0.7,
+              tools: tools.length > 0 ? tools : undefined
+          }
+      });
+      return response.text || "No response generated.";
+
+  } catch (error: any) {
+      console.error("Gemini Generation Error:", error);
+      // Fallback: If File Search fails, try text-only
+      if (indexedDocs.length > 0) {
+           console.warn("Retrying with text fallback...");
+           
+           const allText = documents.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+           const fallbackParts = [{ text: `CONTEXT:\n${allText}`}, { text: lastUserMsg }];
+
+           const fallbackContents = previousHistory.map(h => ({ role: h.role, parts: [{ text: h.text }] }));
+           fallbackContents.push({ role: 'user', parts: fallbackParts });
+
+           const retryResponse = await ai.models.generateContent({
+                model: 'gemini-2.5-flash', 
+                contents: fallbackContents,
+                config: {
+                    systemInstruction: systemInstruction,
+                    maxOutputTokens: 4096, 
+                    temperature: 0.7,
+                }
+            });
+            return retryResponse.text || "No response generated (Fallback).";
       }
-  });
-  
-  return response.text || "No response generated.";
+      throw error;
+  }
 };
