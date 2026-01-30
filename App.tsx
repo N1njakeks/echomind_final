@@ -7,6 +7,7 @@ import { SourceFile, ChatMessage, ChatSession } from './types';
 import SettingsModal from './components/SettingsModal';
 import QuestionnaireModal from './components/QuestionnaireModal';
 import ApiKeyModal from './components/ApiKeyModal';
+import PrivacyModal from './components/PrivacyModal';
 import { 
   LogOut, 
   FileText, 
@@ -30,7 +31,8 @@ import {
   Library,
   History as HistoryIcon,
   AlertTriangle,
-  Play
+  Play,
+  Shield
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
@@ -63,7 +65,7 @@ const InitialLoader = () => (
 );
 
 // --- Auth Screen Component ---
-const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
+const AuthScreen = ({ onLogin, onShowPrivacy }: { onLogin: () => void, onShowPrivacy: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -90,8 +92,8 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
   };
 
   return (
-    <div className="flex items-center justify-center h-full bg-slate-100 p-4">
-      <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
+    <div className="flex items-center justify-center h-full bg-slate-100 p-4 relative">
+      <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200 z-10">
         <div className="flex items-center justify-center mb-6 text-slate-800">
           <BrainCircuit className="w-10 h-10 mr-2 text-slate-700" />
           <h1 className="text-2xl font-bold tracking-tight text-slate-800">EchoMind</h1>
@@ -114,6 +116,12 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
           {isSignUp ? "Already have an account?" : "No account yet?"}{' '}
           <button onClick={() => setIsSignUp(!isSignUp)} className="text-slate-800 hover:underline font-medium">{isSignUp ? 'Sign In' : 'Sign Up'}</button>
         </p>
+      </div>
+      
+      <div className="absolute bottom-6 text-center w-full">
+         <button onClick={onShowPrivacy} className="text-xs text-slate-400 hover:text-slate-600 flex items-center justify-center gap-1 mx-auto transition-colors">
+            <Shield size={12} /> Privacy Policy
+         </button>
       </div>
     </div>
   );
@@ -139,6 +147,7 @@ export default function App() {
 
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   // Questionnaire State
@@ -219,7 +228,7 @@ export default function App() {
       
       // CRITICAL: Auto-load key if exists in DB to use as the preferred key
       if (apiKeyData?.key) {
-          console.log("App: Loaded user API key from DB.");
+          // console.log("App: Loaded user API key from DB.");
           setGeminiApiKey(apiKeyData.key); // Push to service immediately
           setUserApiKey(apiKeyData.key);
       } else {
@@ -311,6 +320,8 @@ export default function App() {
     if (!file) return;
     
     setUploading(true);
+    // console.log(`%c[App] Starting upload flow for: ${file.name}`, "color: #2563eb; font-weight: bold;");
+
     try {
       // 0. Prepare consistent ID
       const docId = crypto.randomUUID();
@@ -584,9 +595,11 @@ export default function App() {
     } finally { setLoading(false); }
   };
 
-  if (isAppLoading) return <InitialLoader />;
-  if (!session) return <AuthScreen onLogin={() => {}} />;
+  // Render Login with Privacy Link
+  if (!session) return <AuthScreen onLogin={() => {}} onShowPrivacy={() => setShowPrivacy(true)} />;
 
+  if (isAppLoading) return <InitialLoader />;
+  
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
   const isSessionLocked = !!currentSessionId;
   
@@ -610,7 +623,6 @@ export default function App() {
         </div>
 
         {/* --- SIDEBAR CONTENT --- */}
-        {/* Changed flex-1 to flex-[2] or similar to give more space to Knowledge */}
         <div className="flex-1 flex flex-col min-h-0 border-b border-slate-100 relative">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -646,7 +658,7 @@ export default function App() {
                   </button>
                   <div className="flex-1 min-w-0 flex items-center">
                       <p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p>
-                      {doc.geminiUri && <Sparkles className="w-3 h-3 text-indigo-500 ml-1 shrink-0" title="AI Native Context" />}
+                      {doc.geminiUri && <span title="AI Native Context"><Sparkles className="w-3 h-3 text-indigo-500 ml-1 shrink-0" /></span>}
                   </div>
                   <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
@@ -670,7 +682,6 @@ export default function App() {
             </div>
         </div>
 
-        {/* Changed flex-1 to shrink-0 and max-h to force it down */}
         <div className="shrink-0 h-auto max-h-[30%] flex flex-col min-h-0 bg-slate-50/30">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -705,6 +716,13 @@ export default function App() {
                 </div>
               ))}
             </div>
+            
+            {/* Privacy Link */}
+             <div className="p-1 text-center border-t border-slate-100 bg-slate-50">
+                 <button onClick={() => setShowPrivacy(true)} className="text-[10px] text-slate-400 hover:text-slate-600 flex items-center justify-center w-full py-1 gap-1">
+                    <Shield size={10} /> Privacy
+                 </button>
+             </div>
         </div>
 
       </div>
@@ -843,6 +861,11 @@ export default function App() {
                 />
            </div>
         </div>
+      )}
+      
+      {/* Privacy Modal */}
+      {showPrivacy && (
+        <PrivacyModal onClose={() => setShowPrivacy(false)} />
       )}
       
       {/* Questionnaire Modal */}

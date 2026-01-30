@@ -1,6 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-// generateEmbedding import removed to prevent usage
-// import { generateEmbedding } from './gemini'; 
 
 // Environment Variables
 const viteEnv = (import.meta as any).env;
@@ -80,13 +78,17 @@ export const storeUserProvidedApiKey = async (label: string, keyValue: string) =
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("No user authenticated");
 
-  // Remove old key of this type to keep it clean (1:1 relationship per label)
+  // 1. Delete OLD keys for this user/label only (keep 1:1 per user)
   await supabase
     .from('api_keys')
     .delete()
-    .eq('label', label)
-    .eq('user_id', user.id);
+    .eq('user_id', user.id)
+    .eq('label', label);
 
+  // 2. Insert new key. 
+  // REVERTED BEHAVIOR: We use 'insert' instead of 'upsert'.
+  // If the key strictly exists in the DB (even for another user) and has a UNIQUE constraint,
+  // this will throw an error, which is the desired behavior now.
   const { data, error } = await supabase
     .from('api_keys')
     .insert([{ 
