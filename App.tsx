@@ -773,7 +773,7 @@ export default function App() {
                             className={`w-full py-3 rounded-xl flex items-center justify-center text-sm font-bold shadow-md transition-all ${
                                 sessionLimitReached 
                                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' 
-                                : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg hover:-translate-y-0.5'
+                                : 'bg-slate-800 text-white hover:bg-slate-900 hover:shadow-lg hover:-translate-y-0.5'
                             }`}
                         >
                             <MessageSquare className="w-4 h-4 mr-2" />
