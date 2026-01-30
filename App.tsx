@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus, fetchApiKey, storeUserProvidedApiKey } from './services/supabase';
-import { generateAnswer, generateEmbedding, setGeminiApiKey, uploadFileToGemini } from './services/gemini';
+import { generateAnswer, generateEmbedding, setGeminiApiKey, uploadFileToGemini, deleteFileFromGemini } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { extractTextFromDocx, extractTextFromPptx } from './services/office';
 import { SourceFile, ChatMessage, ChatSession } from './types';
@@ -405,12 +405,31 @@ export default function App() {
 
   const handleDeleteDocument = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); 
-    if (!confirm("Delete document?")) return;
+    if (!confirm("Delete document? This will also remove it from the AI processing queue.")) return;
+    
+    // Optimistic UI update - removed for safety, let's wait for logic
+    // setDocuments(prev => prev.filter(d => d.id !== id));
+    
     try {
+      // 1. Attempt to delete from Gemini Cloud (using the URI if it exists)
+      const docToDelete = documents.find(d => d.id === id);
+      if (docToDelete?.geminiUri && userApiKey) {
+          // We fire and forget this mostly, but waiting ensures we don't have race conditions
+          // If it fails (e.g. key changed), we still want to delete locally.
+          await deleteFileFromGemini(docToDelete.geminiUri);
+      }
+
+      // 2. Delete from Supabase
       await deleteDocument(id);
+      
+      // 3. Update UI
       setDocuments(prev => prev.filter(d => d.id !== id));
       if (viewingDoc?.id === id) setViewingDoc(null);
-    } catch (err) { console.error("Failed to delete document", err); }
+      
+    } catch (err) { 
+        console.error("Failed to delete document", err);
+        alert("Could not delete document completely. Please try again.");
+    }
   };
 
   const toggleDocumentSelection = (id: string) => {

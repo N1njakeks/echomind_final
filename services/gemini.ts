@@ -283,12 +283,35 @@ export const uploadFileToGemini = async (file: File, mimeType: string, docId: st
   }
 };
 
+/**
+ * Deletes a file from Gemini Cloud.
+ * This ensures we clean up the 20GB quota if a user deletes a document in the UI.
+ */
+export const deleteFileFromGemini = async (fileUri: string): Promise<void> => {
+    const ai = getClient();
+    try {
+        // Extract the file name (resource name) from the URI
+        // URI format: https://generativelanguage.googleapis.com/v1beta/files/abc12345
+        // Required Name format: files/abc12345
+        
+        let fileName = fileUri;
+        if (fileUri.includes("/files/")) {
+            fileName = "files/" + fileUri.split("/files/")[1];
+        }
+
+        await ai.files.delete({ name: fileName });
+        // console.log("✅ Successfully deleted file from Gemini:", fileName);
+    } catch (error) {
+        console.warn("⚠️ Could not delete file from Gemini (might be expired or owned by another key):", error);
+        // We do not throw here to avoid blocking the UI deletion process
+    }
+};
+
 export const generateAnswer = async (
   documents: SourceFile[],
   history: { role: string, text: string }[],
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
-  const ai = getClient();
   
   // CALCULATE CURRENT TURN
   const modelMsgCount = history.filter(h => h.role === 'model').length;
@@ -315,70 +338,101 @@ INSTRUCTION:
   const lastUserMsg = history[history.length - 1].text;
   const previousHistory = history.slice(0, history.length - 1);
   
-  const textContextParts: string[] = [];
-  const fileContextParts: any[] = [];
+  // INNER FUNCTION: Handles the actual API call
+  // We make this internal so we can call it with different configurations (URI vs Text Fallback)
+  const executeGeneration = async (forceTextFallback: boolean = false) => {
+    const ai = getClient();
+    const textContextParts: string[] = [];
+    const fileContextParts: any[] = [];
 
-  // Separate uploaded docs from pure text docs
-  const geminiDocs = documents.filter(d => d.geminiUri);
-  const textDocs = documents.filter(d => !d.geminiUri);
+    // Separate uploaded docs from pure text docs
+    // If fallback is forced, ignore all URIs and treat everything as text
+    const geminiDocs = forceTextFallback ? [] : documents.filter(d => d.geminiUri);
+    const textDocs = forceTextFallback ? documents : documents.filter(d => !d.geminiUri);
 
-  // PLAN: Long Context Window (Pass files directly)
-  // We strictly use fileUri without any tools/retrieval configs
-  geminiDocs.forEach(d => {
-      fileContextParts.push({
-          fileData: {
-              fileUri: d.geminiUri,
-              mimeType: d.geminiMimeType || 'application/pdf'
-          }
-      });
-  });
+    // PLAN: Long Context Window (Pass files directly)
+    geminiDocs.forEach(d => {
+        fileContextParts.push({
+            fileData: {
+                fileUri: d.geminiUri,
+                mimeType: d.geminiMimeType || 'application/pdf'
+            }
+        });
+    });
 
-  // PLAN: Text Fallback (for non-uploaded docs)
-  if (textDocs.length > 0) {
-      const fallbackText = textDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
-      textContextParts.push(`ADDITIONAL CONTEXT (Text Files):\n${fallbackText}`);
-  }
+    // PLAN: Text Fallback (for non-uploaded docs OR fallback mode)
+    if (textDocs.length > 0) {
+        const fallbackText = textDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+        textContextParts.push(`ADDITIONAL CONTEXT (Text Files):\n${fallbackText}`);
+    }
 
-  // Construct Content
-  const contents = previousHistory.map(h => ({
-      role: h.role,
-      parts: [{ text: h.text }]
-  }));
-  
-  const finalUserParts: any[] = [];
-  
-  // Add File Parts (Long Context)
-  if (fileContextParts.length > 0) {
-      finalUserParts.push(...fileContextParts);
-      finalUserParts.push({ text: "\n[System: The above files are provided as context for the user's reflection.]" });
-  }
+    // Construct Content
+    const contents = previousHistory.map(h => ({
+        role: h.role,
+        parts: [{ text: h.text }]
+    }));
+    
+    const finalUserParts: any[] = [];
+    
+    // Add File Parts (Long Context)
+    if (fileContextParts.length > 0) {
+        finalUserParts.push(...fileContextParts);
+        finalUserParts.push({ text: "\n[System: The above files are provided as context for the user's reflection.]" });
+    }
 
-  // Add Text Parts
-  if (textContextParts.length > 0) {
-      finalUserParts.push({ text: textContextParts.join("\n") });
-  }
-  
-  finalUserParts.push({ text: lastUserMsg });
+    // Add Text Parts
+    if (textContextParts.length > 0) {
+        finalUserParts.push({ text: textContextParts.join("\n") });
+    }
+    
+    finalUserParts.push({ text: lastUserMsg });
 
-  contents.push({
-      role: 'user',
-      parts: finalUserParts
-  });
+    contents.push({
+        role: 'user',
+        parts: finalUserParts
+    });
+
+    return await ai.models.generateContent({
+        model: 'gemini-2.5-flash', 
+        contents: contents,
+        config: {
+            systemInstruction: systemInstruction,
+            maxOutputTokens: 4096, 
+            temperature: 0.7,
+        }
+    });
+  };
 
   try {
-      const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash', 
-          contents: contents,
-          config: {
-              systemInstruction: systemInstruction,
-              maxOutputTokens: 4096, 
-              temperature: 0.7,
-              // tools: undefined - Explicitly removed to prevent JSON filter errors
-          }
-      });
+      // ATTEMPT 1: Try using the File URIs (Optimized & Multimodal)
+      const response = await executeGeneration(false);
       return response.text || "No response generated.";
 
   } catch (error: any) {
+      const errMsg = error.message || "";
+      
+      // CHECK FOR EXPIRED FILES
+      // Common errors: "404 Not Found", "Permission denied", "InvalidArgument" regarding files
+      // If we encounter these, it likely means the 48h limit passed.
+      if (
+          errMsg.includes("Not Found") || 
+          errMsg.includes("Permission denied") || 
+          errMsg.includes("404") ||
+          errMsg.includes("403") ||
+          errMsg.includes("invalid argument") // Sometimes file ref errors show as invalid arg
+      ) {
+          console.warn("⚠️ Gemini File URI likely expired or invalid. Falling back to pure text context from DB.");
+          
+          // ATTEMPT 2: Fallback to Text Mode (Guaranteed Persistence)
+          try {
+              const fallbackResponse = await executeGeneration(true);
+              return fallbackResponse.text || "No response generated (Fallback).";
+          } catch (fallbackError) {
+              console.error("Gemini Fallback Generation Error:", fallbackError);
+              throw fallbackError; // If even text fails, we throw real error
+          }
+      }
+
       console.error("Gemini Generation Error:", error);
       throw error;
   }
