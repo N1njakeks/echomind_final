@@ -359,11 +359,11 @@ INSTRUCTION:
     }
 
     // --- CONTEXT PRIMING (SCIENTIFIC STANDARD) ---
-    // We explicitly list the documents available to the model to avoid "confusion" about what it is seeing.
-    // This creates a consistent "Mental Model" for the AI regardless of whether it consumes URI or Text.
-    const docManifest = documents.map((d, i) => `${i + 1}. "${d.title}" (${d.type})`).join("\n");
+    // We use an XML-style manifest. This is the most robust way to ensure the model
+    // recognizes all documents, regardless of whether they are provided via URI or Text.
+    const docManifest = documents.map((d, i) => `   <entry index="${i + 1}" type="${d.type}">${d.title}</entry>`).join("\n");
     const manifestPart = {
-        text: `[SYSTEM CONTEXT]\nYou have access to the following ${documents.length} distinct source documents:\n${docManifest}\n\nPlease use ALL provided documents for your reflection.\n-----------------------------------`
+        text: `[SYSTEM CONTEXT]\nYou are provided with the following ${documents.length} source documents. Use ALL of them for your reflection.\n\n<document_manifest>\n${docManifest}\n</document_manifest>\n\n-----------------------------------`
     };
 
     // PLAN: Long Context Window (Pass files directly)
@@ -378,9 +378,16 @@ INSTRUCTION:
 
     // PLAN: Text Fallback (for non-uploaded docs OR fallback mode)
     if (textDocs.length > 0) {
-        // We create clear boundaries for text content to prevent the model from merging distinct docs
-        const fallbackText = textDocs.map(d => `--- START OF DOCUMENT: ${d.title} ---\n${d.content || "(Empty Content)"}\n--- END OF DOCUMENT: ${d.title} ---`).join("\n\n");
-        textContextParts.push(`[ADDITIONAL TEXT CONTENT]\n${fallbackText}`);
+        // XML TAGGING STRATEGY:
+        // Instead of loose text lines, we wrap text content in XML tags.
+        // This effectively simulates a "File" boundary for the model, preventing it from merging distinct sources.
+        const fallbackText = textDocs.map((d, i) => 
+`<document index="${i + 1}" title="${d.title}">
+${d.content || "(Empty Content)"}
+</document>`
+        ).join("\n\n");
+        
+        textContextParts.push(`[ADDITIONAL SOURCE CONTENT]\nThe following documents are provided as text:\n\n${fallbackText}`);
     }
 
     // Construct Content
