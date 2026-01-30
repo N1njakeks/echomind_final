@@ -320,16 +320,23 @@ export const generateAnswer = async (
   let systemInstruction = "";
 
   if (mode === 'reflective') {
+      // DYNAMIC INJECTION:
+      // We append a high-priority runtime instruction that tells the model EXACTLY where it is
+      // and how to handle the "Robotic Response" issue without changing the base prompt.
       systemInstruction = `${SMART_PROMPT_BASE}
       
 [SYSTEM RUNTIME OVERRIDE]
 CURRENT STATUS: YOU ARE STRICTLY AT TURN ${currentTurn} OF 10.
 INSTRUCTION:
 1. Look at the "INTERNAL STRUCTURE" for Turn ${currentTurn}. THAT is your goal.
-2. If the user's previous answer was negative, modify the question to fit.
+2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${currentTurn} question to fit (e.g., ask what was missing instead of what they learned).
 3. If Turn ${currentTurn} is 10, output the CLOSING SEQUENCE exactly and STOP.`;
   } else {
+      // Inject simple state tracking for V1
       systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
+
+      // FIX FOR V1 (STANDARD MODE):
+      // Add a strict runtime override for the final turn so it acts "smart" and stops.
       if (currentTurn >= 10) {
          systemInstruction += `\n\nCRITICAL OVERRIDE: This is Turn 10. DO NOT ask any new questions. Thank the user politely and STOP.`;
       }
