@@ -29,7 +29,8 @@ import {
   ClipboardList,
   Library,
   History as HistoryIcon,
-  AlertTriangle
+  AlertTriangle,
+  Play
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
@@ -761,11 +762,28 @@ export default function App() {
                         <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mb-4 mx-auto text-slate-600"><FileText className="w-6 h-6" /></div>
                         <h3 className="text-lg font-bold text-slate-800 mb-2">Select & Start</h3>
                         <p className="text-slate-500 mb-6 text-sm leading-relaxed">
-                            Use the checkboxes in the sidebar to select documents. <br/>Then click "Start Session".
+                            Select documents from the sidebar to include in your session.
                         </p>
-                        <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-400 border border-slate-100">
+                        <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-500 border border-slate-200 font-medium mb-4">
                            {documents.filter(d => d.isSelected).length} Documents selected
                         </div>
+                        <button 
+                            onClick={handleStartSessionClick} 
+                            disabled={sessionLimitReached}
+                            className={`w-full py-3 rounded-xl flex items-center justify-center text-sm font-bold shadow-md transition-all ${
+                                sessionLimitReached 
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' 
+                                : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg hover:-translate-y-0.5'
+                            }`}
+                        >
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            {sessionLimitReached 
+                                ? 'Session Limit Reached' 
+                                : (hasV1 
+                                    ? 'Start V2 Session' 
+                                    : (hasV2 ? 'Start V1 Session' : `Start ${selectedMode === 'reflective' ? 'V2' : 'V1'} Session`))
+                            }
+                        </button>
                     </div>
                   ) : <><BrainCircuit className="w-16 h-16 mb-4 opacity-10" /><p className="text-sm">Ready for uploads.</p></>}
                 </div>
