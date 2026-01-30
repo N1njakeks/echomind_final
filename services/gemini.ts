@@ -282,29 +282,47 @@ export const generateAnswer = async (
   let systemInstruction = "";
 
   if (mode === 'reflective') {
-      systemInstruction = `${SMART_PROMPT_BASE}
+      // FORCE STRICT CLOSING AT TURN 10
+      // We replace the entire prompt to remove distraction from previous steps
+      if (currentTurn >= 10) {
+          systemInstruction = `You are Echomind, a reflective companion.
+          
+CURRENT STATUS: FINAL TURN (Turn 10 of 10).
+The conversation MUST end now.
+
+YOUR INSTRUCTIONS:
+1. Write EXACTLY ONE specific sentence to acknowledge the user's last input or their effort in the session.
+   - Example: "I appreciate the effort you put into thinking through these hard topics today."
+   - Example: "It sounds like you've found a good starting point."
+   - If they struggled: "Reflection isn't easy, and it's okay to leave it here for now."
+2. Then, immediately output the mandatory closing phrase: "That's where I'll leave you today. Thanks for reflecting with me."
+3. STOP. Do not ask questions. Do not write anything else.`;
+      } else {
+          systemInstruction = `${SMART_PROMPT_BASE}
       
 [SYSTEM RUNTIME OVERRIDE]
 CURRENT STATUS: YOU ARE STRICTLY AT TURN ${currentTurn} OF 10.
 INSTRUCTION:
 1. Look at the "INTERNAL STRUCTURE" for Turn ${currentTurn}. THAT is your goal.
-2. If the user is struggling, confused, or brief, DO NOT force deep insights. Instead, validate their difficulty (e.g., "It's okay if this feels unclear right now") before moving to the next step.
-
-3. CRITICAL - TURN 10 BEHAVIOR:
-   If Turn ${currentTurn} is 10, you must close.
-   - IF the conversation went well: Use the standard closing.
-   - IF the user struggled or didn't finish the cycle: First, write ONE sentence validation (e.g., "Reflection is hard work, and it's okay that we didn't solve everything today.").
-   - THEN, immediately follow with the mandatory closing phrase: "That's where I'll leave you today. Thanks for reflecting with me."
-   - STOP after that phrase.`;
+2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${currentTurn} question to fit (e.g., ask what was missing instead of what they learned).
+3. If the user is struggling, confused, or brief, DO NOT force deep insights. Instead, validate their difficulty (e.g., "It's okay if this feels unclear right now") before moving to the next step.`;
+      }
 
   } else {
-      // Inject simple state tracking for V1
-      systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
-
-      // FIX FOR V1 (STANDARD MODE):
-      // Add a strict runtime override for the final turn so it acts "smart" and stops.
+      // STANDARD MODE LOGIC
       if (currentTurn >= 10) {
-         systemInstruction += `\n\nCRITICAL OVERRIDE: This is Turn 10. DO NOT ask any new questions. Thank the user politely and STOP.`;
+          // Force close V1 as well for consistency
+          systemInstruction = `You are Echomind.
+CURRENT STATUS: Turn 10 of 10 (FINAL).
+Your goal is to Close the conversation.
+
+INSTRUCTION:
+1. Thank the user for reflecting.
+2. Say: "That's a good place to stop. Thanks for reflecting with me."
+3. STOP. Do not ask questions.`;
+      } else {
+          // Inject simple state tracking for V1
+          systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
       }
   }
   
