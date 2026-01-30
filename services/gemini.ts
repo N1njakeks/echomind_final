@@ -358,6 +358,14 @@ INSTRUCTION:
         console.log(`%c📝 [Gemini] Using Text Content from DB (${reason}).`, "color: #f59e0b; font-weight: bold; font-size: 12px; border: 1px solid #f59e0b; padding: 4px; border-radius: 4px;");
     }
 
+    // --- CONTEXT PRIMING (SCIENTIFIC STANDARD) ---
+    // We explicitly list the documents available to the model to avoid "confusion" about what it is seeing.
+    // This creates a consistent "Mental Model" for the AI regardless of whether it consumes URI or Text.
+    const docManifest = documents.map((d, i) => `${i + 1}. "${d.title}" (${d.type})`).join("\n");
+    const manifestPart = {
+        text: `[SYSTEM CONTEXT]\nYou have access to the following ${documents.length} distinct source documents:\n${docManifest}\n\nPlease use ALL provided documents for your reflection.\n-----------------------------------`
+    };
+
     // PLAN: Long Context Window (Pass files directly)
     geminiDocs.forEach(d => {
         fileContextParts.push({
@@ -370,8 +378,9 @@ INSTRUCTION:
 
     // PLAN: Text Fallback (for non-uploaded docs OR fallback mode)
     if (textDocs.length > 0) {
-        const fallbackText = textDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
-        textContextParts.push(`ADDITIONAL CONTEXT (Text Files):\n${fallbackText}`);
+        // We create clear boundaries for text content to prevent the model from merging distinct docs
+        const fallbackText = textDocs.map(d => `--- START OF DOCUMENT: ${d.title} ---\n${d.content || "(Empty Content)"}\n--- END OF DOCUMENT: ${d.title} ---`).join("\n\n");
+        textContextParts.push(`[ADDITIONAL TEXT CONTENT]\n${fallbackText}`);
     }
 
     // Construct Content
@@ -382,18 +391,22 @@ INSTRUCTION:
     
     const finalUserParts: any[] = [];
     
-    // Add File Parts (Long Context)
+    // 1. MANIFEST (PRIMING)
+    finalUserParts.push(manifestPart);
+
+    // 2. FILE PARTS (URIs)
     if (fileContextParts.length > 0) {
         finalUserParts.push(...fileContextParts);
-        finalUserParts.push({ text: "\n[System: The above files are provided as context for the user's reflection.]" });
+        finalUserParts.push({ text: "\n[System: The above files are provided via reference URI.]" });
     }
 
-    // Add Text Parts
+    // 3. TEXT PARTS (Scraped/Extracted)
     if (textContextParts.length > 0) {
         finalUserParts.push({ text: textContextParts.join("\n") });
     }
     
-    finalUserParts.push({ text: lastUserMsg });
+    // 4. ACTUAL USER MESSAGE
+    finalUserParts.push({ text: `\n[USER MESSAGE]\n${lastUserMsg}` });
 
     contents.push({
         role: 'user',
@@ -424,7 +437,7 @@ INSTRUCTION:
       if (
           errMsg.includes("not found") || 
           errMsg.includes("permission denied") || 
-          errMsg.includes("404") ||
+          errMsg.includes("404") || 
           errMsg.includes("403") ||
           errMsg.includes("invalid argument") ||
           errMsg.includes("500") || // SERVER ERROR
