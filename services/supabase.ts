@@ -1,4 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
+// generateEmbedding import removed to prevent usage
+// import { generateEmbedding } from './gemini'; 
 
 // Environment Variables
 const viteEnv = (import.meta as any).env;
@@ -78,17 +80,13 @@ export const storeUserProvidedApiKey = async (label: string, keyValue: string) =
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("No user authenticated");
 
-  // 1. Delete OLD keys for this user/label only (keep 1:1 per user)
+  // Remove old key of this type to keep it clean (1:1 relationship per label)
   await supabase
     .from('api_keys')
     .delete()
-    .eq('user_id', user.id)
-    .eq('label', label);
+    .eq('label', label)
+    .eq('user_id', user.id);
 
-  // 2. Insert new key. 
-  // REVERTED BEHAVIOR: We use 'insert' instead of 'upsert'.
-  // If the key strictly exists in the DB (even for another user) and has a UNIQUE constraint,
-  // this will throw an error, which is the desired behavior now.
   const { data, error } = await supabase
     .from('api_keys')
     .insert([{ 
@@ -104,40 +102,23 @@ export const storeUserProvidedApiKey = async (label: string, keyValue: string) =
 };
 
 // --- Documents ---
-export const saveDocumentToCloud = async (
-    id: string,
-    title: string, 
-    content: string, 
-    type: string, 
-    pageCount?: number, 
-    geminiUri?: string, 
-    geminiMimeType?: string
-) => {
+export const saveDocumentToCloud = async (title: string, content: string, type: string, pageCount?: number) => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("User not authenticated");
 
   // DISABLE EMBEDDINGS to save quota for Chat
   const embedding = null; 
 
-  const payload: any = { 
-        id, // Explicit ID for synchronization
+  const { data, error } = await supabase
+    .from('documents')
+    .insert([{ 
         user_id: user.id, 
         title, 
         content, 
         type, 
         embedding, 
         is_read: false 
-  };
-  
-  // Conditionally add Gemini fields (assumes DB has these columns, if not it ignores or errors)
-  if (geminiUri) {
-      payload.gemini_uri = geminiUri;
-      payload.gemini_mimetype = geminiMimeType;
-  }
-
-  const { data, error } = await supabase
-    .from('documents')
-    .insert([payload])
+    }])
     .select()
     .single();
 
@@ -166,34 +147,16 @@ export const fetchUserDocuments = async (userId?: string) => {
       uid = user.id;
   }
 
+  // REVERT: Added 'content' back to select so it loads immediately.
+  // Added 'summary' to select (can keep fetching it, just won't use it much)
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, content, summary, type, is_read, created_at, gemini_uri, gemini_mimetype')
+    .select('id, title, content, summary, type, is_read, created_at')
     .eq('user_id', uid)
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error("Fetch docs error (possibly missing columns):", error);
-    // Fallback if columns missing
-    if (error.code === '42703') {
-        const { data: retryData } = await supabase
-            .from('documents')
-            .select('id, title, content, summary, type, is_read, created_at')
-            .eq('user_id', uid)
-            .order('created_at', { ascending: false });
-        
-        return (retryData || []).map((doc: any) => ({
-            id: doc.id,
-            title: doc.title,
-            content: doc.content, 
-            summary: doc.summary, 
-            type: doc.type,
-            isRead: doc.is_read,
-            isSelected: false,
-            createdAt: new Date(doc.created_at).getTime(),
-            pageCount: 1
-        }));
-    }
+    console.error("Fetch docs error:", error);
     return [];
   }
   
@@ -203,12 +166,10 @@ export const fetchUserDocuments = async (userId?: string) => {
     content: doc.content, 
     summary: doc.summary, 
     type: doc.type,
-    geminiUri: doc.gemini_uri,
-    geminiMimeType: doc.gemini_mimetype,
     isRead: doc.is_read,
     isSelected: false,
     createdAt: new Date(doc.created_at).getTime(),
-    pageCount: 1
+    pageCount: 1 // Default fallback
   }));
 };
 
@@ -239,6 +200,7 @@ export const deleteDocument = async (id: string) => {
 };
 
 export const findSimilarDocuments = async (embedding: number[]) => {
+    // RAG disabled because embeddings are disabled
     return [];
 };
 
@@ -288,7 +250,7 @@ export const fetchChatSessions = async (userId?: string) => {
             ...session,
             title,
             mode: mode,
-            sourceIds: session.source_ids || []
+            sourceIds: session.source_ids || [] // Added explicit mapping here
         };
     });
 };

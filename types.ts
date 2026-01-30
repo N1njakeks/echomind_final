@@ -4,8 +4,6 @@ export interface SourceFile {
   content?: string; // Changed to optional for lazy loading
   summary?: string; // New field for pre-computed summaries
   type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video';
-  geminiUri?: string; // URI from Gemini File API
-  geminiMimeType?: string; // MimeType used for Gemini
   isRead: boolean;
   isSelected: boolean;
   createdAt: number;

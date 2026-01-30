@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, signIn, signUp, signOut, fetchUserDocuments, saveDocumentToCloud, createChatSession, saveChatMessage, findSimilarDocuments, fetchChatSessions, fetchChatMessages, deleteDocument, fetchDocumentContent, deleteChatSession, updateDocumentSummary, getQuestionnaireStatus, fetchApiKey, storeUserProvidedApiKey } from './services/supabase';
-import { generateAnswer, generateEmbedding, setGeminiApiKey, uploadFileToGemini, deleteFileFromGemini } from './services/gemini';
+import { generateAnswer, generateEmbedding, setGeminiApiKey } from './services/gemini';
 import { extractTextFromPdf } from './services/pdf';
 import { extractTextFromDocx, extractTextFromPptx } from './services/office';
 import { SourceFile, ChatMessage, ChatSession } from './types';
 import SettingsModal from './components/SettingsModal';
 import QuestionnaireModal from './components/QuestionnaireModal';
 import ApiKeyModal from './components/ApiKeyModal';
-import PrivacyModal from './components/PrivacyModal';
 import { 
   LogOut, 
   FileText, 
@@ -31,8 +30,7 @@ import {
   Library,
   History as HistoryIcon,
   AlertTriangle,
-  Play,
-  Shield
+  Play
 } from 'lucide-react';
 
 const MAX_MESSAGES_PER_SESSION = 10;
@@ -65,7 +63,7 @@ const InitialLoader = () => (
 );
 
 // --- Auth Screen Component ---
-const AuthScreen = ({ onLogin, onShowPrivacy }: { onLogin: () => void, onShowPrivacy: () => void }) => {
+const AuthScreen = ({ onLogin }: { onLogin: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -92,8 +90,8 @@ const AuthScreen = ({ onLogin, onShowPrivacy }: { onLogin: () => void, onShowPri
   };
 
   return (
-    <div className="flex items-center justify-center h-full bg-slate-100 p-4 relative">
-      <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200 z-10">
+    <div className="flex items-center justify-center h-full bg-slate-100 p-4">
+      <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200">
         <div className="flex items-center justify-center mb-6 text-slate-800">
           <BrainCircuit className="w-10 h-10 mr-2 text-slate-700" />
           <h1 className="text-2xl font-bold tracking-tight text-slate-800">EchoMind</h1>
@@ -116,12 +114,6 @@ const AuthScreen = ({ onLogin, onShowPrivacy }: { onLogin: () => void, onShowPri
           {isSignUp ? "Already have an account?" : "No account yet?"}{' '}
           <button onClick={() => setIsSignUp(!isSignUp)} className="text-slate-800 hover:underline font-medium">{isSignUp ? 'Sign In' : 'Sign Up'}</button>
         </p>
-      </div>
-      
-      <div className="absolute bottom-6 text-center w-full">
-         <button onClick={onShowPrivacy} className="text-xs text-slate-400 hover:text-slate-600 flex items-center justify-center gap-1 mx-auto transition-colors">
-            <Shield size={12} /> Privacy Policy
-         </button>
       </div>
     </div>
   );
@@ -147,7 +139,6 @@ export default function App() {
 
   const [viewingDoc, setViewingDoc] = useState<SourceFile | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showPrivacy, setShowPrivacy] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   // Questionnaire State
@@ -167,7 +158,12 @@ export default function App() {
 
   // HELPER: Calculate valid AI responses
   const getValidAiCount = (msgs: ChatMessage[]) => {
-    return msgs.filter(m => m.role === 'model' && !m.text.startsWith('[ERROR]')).length;
+    return msgs.filter(m => 
+      m.role === 'model' && 
+      !m.text.startsWith('[ERROR]') && 
+      !m.text.trim().startsWith('{"error":') &&
+      !m.text.startsWith('⚠️')
+    ).length;
   };
 
   useEffect(() => {
@@ -228,7 +224,7 @@ export default function App() {
       
       // CRITICAL: Auto-load key if exists in DB to use as the preferred key
       if (apiKeyData?.key) {
-          // console.log("App: Loaded user API key from DB.");
+          console.log("App: Loaded user API key from DB.");
           setGeminiApiKey(apiKeyData.key); // Push to service immediately
           setUserApiKey(apiKeyData.key);
       } else {
@@ -320,74 +316,34 @@ export default function App() {
     if (!file) return;
     
     setUploading(true);
-    // console.log(`%c[App] Starting upload flow for: ${file.name}`, "color: #2563eb; font-weight: bold;");
-
     try {
-      // 0. Prepare consistent ID
-      const docId = crypto.randomUUID();
-
       let content = '';
       let type: 'text' | 'pdf' | 'markdown' | 'json' | 'api' | 'image' | 'video' = 'text'; 
       let pageCount = 1;
-      let geminiUri = undefined;
-      let geminiMimeType = undefined;
       
       const fileName = file.name.toLowerCase();
 
-      // 1. Text Extraction
       if (fileName.endsWith('.pdf')) {
         type = 'pdf';
         const pdfData = await extractTextFromPdf(file);
         content = pdfData.text;
         pageCount = pdfData.pageCount;
-        geminiMimeType = 'application/pdf';
       } else if (fileName.endsWith('.docx')) {
-        type = 'text'; 
+        type = 'text'; // Treating word content as text
         const docResult = await extractTextFromDocx(file);
         content = docResult.text;
         pageCount = docResult.pageCount;
-        // NOTE: We will treat extracted DOCX text as a "text/plain" file for Gemini
-        geminiMimeType = 'text/plain'; 
       } else if (fileName.endsWith('.pptx')) {
-        type = 'text'; 
+        type = 'text'; // Treating slides as text
         const pptResult = await extractTextFromPptx(file);
         content = pptResult.text;
         pageCount = pptResult.pageCount;
-        // NOTE: We will treat extracted PPTX text as a "text/plain" file for Gemini
-        geminiMimeType = 'text/plain';
       } else {
+        // Fallback for txt, md, json
         content = await file.text();
-        geminiMimeType = 'text/plain'; // Simple text files
       }
 
-      // 2. Upload to Gemini (Long Context Window Strategy)
-      // We now try to upload everything. 
-      // If it's a PDF, we upload the PDF file directly.
-      // If it's DOCX/PPTX, we create a virtual text file from the extracted content and upload that.
-      if (userApiKey) {
-          try {
-             let fileToUpload = file;
-             
-             // UNIFIED UPLOAD: If it's not a PDF, but we have content (Word/PPTX), 
-             // create a virtual file object to upload the TEXT content to Gemini.
-             // This ensures Word docs also get a URI and usage of the Long Context Window.
-             if (type !== 'pdf' && content.length > 0) {
-                 const textBlob = new Blob([content], { type: 'text/plain' });
-                 fileToUpload = new File([textBlob], `${file.name}.txt`, { type: 'text/plain' });
-                 geminiMimeType = 'text/plain';
-             }
-
-             if (geminiMimeType) {
-                geminiUri = await uploadFileToGemini(fileToUpload, geminiMimeType, docId);
-             }
-          } catch (uploadError) {
-             console.warn("Failed to upload to Gemini, falling back to pure text prompt.", uploadError);
-             // Proceed without geminiUri
-          }
-      }
-
-      // 3. Save to Cloud with explicit ID
-      await saveDocumentToCloud(docId, file.name, content, type, pageCount, geminiUri, geminiMimeType);
+      await saveDocumentToCloud(file.name, content, type, pageCount);
       
       if (session?.user?.id) {
           // Refresh docs only
@@ -405,31 +361,12 @@ export default function App() {
 
   const handleDeleteDocument = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); 
-    if (!confirm("Delete document? This will also remove it from the AI processing queue.")) return;
-    
-    // Optimistic UI update - removed for safety, let's wait for logic
-    // setDocuments(prev => prev.filter(d => d.id !== id));
-    
+    if (!confirm("Delete document?")) return;
     try {
-      // 1. Attempt to delete from Gemini Cloud (using the URI if it exists)
-      const docToDelete = documents.find(d => d.id === id);
-      if (docToDelete?.geminiUri && userApiKey) {
-          // We fire and forget this mostly, but waiting ensures we don't have race conditions
-          // If it fails (e.g. key changed), we still want to delete locally.
-          await deleteFileFromGemini(docToDelete.geminiUri);
-      }
-
-      // 2. Delete from Supabase
       await deleteDocument(id);
-      
-      // 3. Update UI
       setDocuments(prev => prev.filter(d => d.id !== id));
       if (viewingDoc?.id === id) setViewingDoc(null);
-      
-    } catch (err) { 
-        console.error("Failed to delete document", err);
-        alert("Could not delete document completely. Please try again.");
-    }
+    } catch (err) { console.error("Failed to delete document", err); }
   };
 
   const toggleDocumentSelection = (id: string) => {
@@ -584,9 +521,15 @@ export default function App() {
       await saveChatMessage(currentSessionId, userMsg);
       const selectedDocs = documents.filter(d => d.isSelected);
       
-      // NOTE: generateAnswer will now prefer the Gemini File URI if it exists in the document object
-      // otherwise it falls back to the extracted text.
-      const aiResponseText = await generateAnswer(selectedDocs, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
+      let context = "";
+      // NOTE: embeddings disabled, so we rely on selected docs or skip RAG
+      if (selectedDocs.length > 0) {
+          context = selectedDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
+      } 
+      // Fallback: If no docs selected, context is empty (Standard Chat)
+      // We removed findSimilarDocuments call because it depends on embeddings which are now disabled.
+
+      const aiResponseText = await generateAnswer(context, newMessages.map(m => ({ role: m.role, text: m.text })), chatMode);
       const aiMsg: ChatMessage = { id: crypto.randomUUID(), role: 'model', text: aiResponseText, timestamp: Date.now(), isThinking: chatMode === 'reflective' };
       
       const updatedMessagesWithAi = [...newMessages, aiMsg];
@@ -633,11 +576,9 @@ export default function App() {
     } finally { setLoading(false); }
   };
 
-  // Render Login with Privacy Link
-  if (!session) return <AuthScreen onLogin={() => {}} onShowPrivacy={() => setShowPrivacy(true)} />;
-
   if (isAppLoading) return <InitialLoader />;
-  
+  if (!session) return <AuthScreen onLogin={() => {}} />;
+
   const totalPages = documents.reduce((sum, d) => sum + (d.pageCount || 1), 0);
   const isSessionLocked = !!currentSessionId;
   
@@ -661,6 +602,7 @@ export default function App() {
         </div>
 
         {/* --- SIDEBAR CONTENT --- */}
+        {/* Changed flex-1 to flex-[2] or similar to give more space to Knowledge */}
         <div className="flex-1 flex flex-col min-h-0 border-b border-slate-100 relative">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -694,10 +636,7 @@ export default function App() {
                   >
                     {doc.isSelected ? <CheckSquare className="w-4 h-4 text-slate-800" /> : <Square className="w-4 h-4" />}
                   </button>
-                  <div className="flex-1 min-w-0 flex items-center">
-                      <p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p>
-                      {/* Removed AI Sparkles Icon as requested */}
-                  </div>
+                  <div className="flex-1 min-w-0"><p className={`text-xs md:text-sm font-medium truncate ${doc.isSelected ? 'text-slate-900' : 'text-slate-700'}`}>{doc.title}</p></div>
                   <button onClick={(e) => handleDeleteDocument(e, doc.id)} className="ml-2 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               ))}
@@ -720,10 +659,11 @@ export default function App() {
             </div>
         </div>
 
+        {/* Changed flex-1 to shrink-0 and max-h to force it down */}
         <div className="shrink-0 h-auto max-h-[30%] flex flex-col min-h-0 bg-slate-50/30">
             <div className="px-4 py-2 bg-slate-50/50 flex items-center justify-between border-b border-slate-100 shrink-0">
                  <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    <Library className="w-3.5 h-3.5 mr-1.5" /> History
+                    <HistoryIcon className="w-3.5 h-3.5 mr-1.5" /> History
                  </div>
                  <button 
                     onClick={handleNewChat}
@@ -754,13 +694,6 @@ export default function App() {
                 </div>
               ))}
             </div>
-            
-            {/* Privacy Link */}
-             <div className="p-1 text-center border-t border-slate-100 bg-slate-50">
-                 <button onClick={() => setShowPrivacy(true)} className="text-[10px] text-slate-400 hover:text-slate-600 flex items-center justify-center w-full py-1 gap-1">
-                    <Shield size={10} /> Privacy
-                 </button>
-             </div>
         </div>
 
       </div>
@@ -899,11 +832,6 @@ export default function App() {
                 />
            </div>
         </div>
-      )}
-      
-      {/* Privacy Modal */}
-      {showPrivacy && (
-        <PrivacyModal onClose={() => setShowPrivacy(false)} />
       )}
       
       {/* Questionnaire Modal */}

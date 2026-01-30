@@ -45,19 +45,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, onApiKeyUpdate }
   // --- Gemini Handlers ---
   const handleSaveGemini = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanedKey = geminiKey.trim();
-
-    if (!cleanedKey.startsWith('AIza')) {
+    if (!geminiKey.startsWith('AIza')) {
         setGeminiStatus('error');
         return;
     }
     
     setIsSavingGemini(true);
     try {
-        await storeUserProvidedApiKey('google_gemini', cleanedKey);
-        setGeminiApiKey(cleanedKey); // Update in-memory service
-        onApiKeyUpdate(cleanedKey);  // Update App state
-        setGeminiKey(cleanedKey);    // Update UI with cleaned key
+        await storeUserProvidedApiKey('google_gemini', geminiKey);
+        setGeminiApiKey(geminiKey); // Update in-memory service
+        onApiKeyUpdate(geminiKey);  // Update App state
         setGeminiStatus('success');
         setTimeout(() => setGeminiStatus('idle'), 2000);
     } catch (err) {

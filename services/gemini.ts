@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import { SourceFile } from "../types";
 
 // Use a singleton approach to avoid re-initializing
 let aiClient: GoogleGenAI | null = null;
@@ -10,14 +9,18 @@ export const setGeminiApiKey = (key: string) => {
   if (key && key.startsWith("AIza")) {
     userProvidedKey = key;
     aiClient = null; // Force re-initialization
-    // console.log("Gemini Service: User API Key updated.");
+    console.log("Gemini Service: User API Key set successfully.");
   } else {
     console.warn("Gemini Service: Invalid key format ignored.");
   }
 };
 
 const getClient = () => {
+  // Always verify if a client needs to be (re)created
   if (!aiClient) {
+    // STRICT PRIORITY:
+    // 1. User provided key (from Settings/DB)
+    // 2. Vite Env Var (Fallback for local dev)
     const apiKey = userProvidedKey || (import.meta as any).env.VITE_GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -34,6 +37,7 @@ const getClient = () => {
 };
 
 // --- System Prompts ---
+
 const STANDARD_PROMPT = `
 You are Echomind, a reflective companion that helps learners
 make sense of what they've been reading through thoughtful conversation.
@@ -239,81 +243,39 @@ WHAT NOT TO DO
 •⁠  ⁠Do not use more than 3 sentences per response
 •⁠  ⁠Do not make statements that sound like conclusions`;
 
+/**
+ * Generates vector embedding for text
+ */
 export const generateEmbedding = async (text: string): Promise<number[]> => {
-  // Kept for interface compatibility, but effectively unused if RAG is disabled
   const ai = getClient();
   try {
+      // Note: text-embedding-004 might not be available on free tier keys in some regions
       const response = await ai.models.embedContent({
         model: 'text-embedding-004',
         contents: text
       });
-      return response.embeddings?.[0]?.values || [];
+
+      if (!response.embeddings || response.embeddings.length === 0) {
+        throw new Error("Failed to generate embedding");
+      }
+      
+      return response.embeddings[0].values;
   } catch (e) {
+      console.warn("Embedding failed (likely Free Tier limitation or model not found). Continuing without embeddings.");
       return [];
   }
 };
 
-/**
- * Uploads a file to Gemini. 
- * STRICTLY does NOT use FileSearch/RAG. Returns URI for Long Context Window usage.
- */
-export const uploadFileToGemini = async (file: File, mimeType: string, docId: string): Promise<string> => {
-  const ai = getClient();
-  
-  try {
-    // 1. Upload the raw file
-    const uploadResult = await ai.files.upload({
-      file: file,
-      config: { 
-        mimeType: mimeType,
-        displayName: file.name
-      }
-    });
-    
-    // Robustly extract URI
-    const fileUri = uploadResult.uri || (uploadResult as any).file?.uri;
-    
-    if (!fileUri) throw new Error("Gemini Upload failed to return a valid URI.");
-    
-    return fileUri;
-
-  } catch (error) {
-    console.error("❌ Gemini Upload Failed:", error);
-    throw error;
-  }
-};
-
-/**
- * Deletes a file from Gemini Cloud.
- * This ensures we clean up the 20GB quota if a user deletes a document in the UI.
- */
-export const deleteFileFromGemini = async (fileUri: string): Promise<void> => {
-    const ai = getClient();
-    try {
-        // Extract the file name (resource name) from the URI
-        // URI format: https://generativelanguage.googleapis.com/v1beta/files/abc12345
-        // Required Name format: files/abc12345
-        
-        let fileName = fileUri;
-        if (fileUri.includes("/files/")) {
-            fileName = "files/" + fileUri.split("/files/")[1];
-        }
-
-        await ai.files.delete({ name: fileName });
-        // console.log("✅ Successfully deleted file from Gemini:", fileName);
-    } catch (error) {
-        console.warn("⚠️ Could not delete file from Gemini (might be expired or owned by another key):", error);
-        // We do not throw here to avoid blocking the UI deletion process
-    }
-};
-
 export const generateAnswer = async (
-  documents: SourceFile[],
+  context: string, 
   history: { role: string, text: string }[],
   mode: 'standard' | 'reflective'
 ): Promise<string> => {
+  const ai = getClient();
   
   // CALCULATE CURRENT TURN
+  // Count how many model messages exist in the history to find the Turn #.
+  // We add 1 because we are about to generate the NEXT model message.
   const modelMsgCount = history.filter(h => h.role === 'model').length;
   const currentTurn = modelMsgCount + 1;
   
@@ -331,6 +293,7 @@ INSTRUCTION:
 1. Look at the "INTERNAL STRUCTURE" for Turn ${currentTurn}. THAT is your goal.
 2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${currentTurn} question to fit (e.g., ask what was missing instead of what they learned).
 3. If Turn ${currentTurn} is 10, output the CLOSING SEQUENCE exactly and STOP.`;
+
   } else {
       // Inject simple state tracking for V1
       systemInstruction = `${STANDARD_PROMPT}\n\n[SYSTEM UPDATE]\nCURRENT STATUS: YOU ARE NOW AT TURN ${currentTurn} OF 10.`;
@@ -343,134 +306,37 @@ INSTRUCTION:
   }
   
   const lastUserMsg = history[history.length - 1].text;
+  
+  let finalPrompt = "";
+  
+  if (context) {
+      finalPrompt = `CONTEXT FROM DOCUMENTS:\n${context}\n\nUSER QUESTION:\n${lastUserMsg}`;
+  } else {
+      finalPrompt = lastUserMsg;
+  }
+
   const previousHistory = history.slice(0, history.length - 1);
   
-  // INNER FUNCTION: Handles the actual API call
-  // We make this internal so we can call it with different configurations (URI vs Text Fallback)
-  const executeGeneration = async (forceTextFallback: boolean = false) => {
-    const ai = getClient();
-    const textContextParts: string[] = [];
-    const fileContextParts: any[] = [];
+  const contents = previousHistory.map(h => ({
+      role: h.role,
+      parts: [{ text: h.text }]
+  }));
+  
+  contents.push({
+      role: 'user',
+      parts: [{ text: finalPrompt }]
+  });
 
-    // Separate uploaded docs from pure text docs
-    // If fallback is forced, ignore all URIs and treat everything as text
-    const geminiDocs = forceTextFallback ? [] : documents.filter(d => d.geminiUri);
-    const textDocs = forceTextFallback ? documents : documents.filter(d => !d.geminiUri);
-
-    // --- CONSOLE LOGGING FOR DEBUGGING ---
-    if (geminiDocs.length > 0) {
-        console.log(`%c🚀 [Gemini] Using File URIs (Long Context) for ${geminiDocs.length} documents.`, "color: #10b981; font-weight: bold; font-size: 12px; border: 1px solid #10b981; padding: 4px; border-radius: 4px;");
-    } else {
-        const reason = forceTextFallback ? "Fallback Triggered (URI Expired or Server Error)" : "No URIs available";
-        console.log(`%c📝 [Gemini] Using Text Content from DB (${reason}).`, "color: #f59e0b; font-weight: bold; font-size: 12px; border: 1px solid #f59e0b; padding: 4px; border-radius: 4px;");
-    }
-
-    // --- CONTEXT PRIMING (SCIENTIFIC STANDARD) ---
-    // We use an XML-style manifest. This is the most robust way to ensure the model
-    // recognizes all documents, regardless of whether they are provided via URI or Text.
-    const docManifest = documents.map((d, i) => `   <entry index="${i + 1}" type="${d.type}">${d.title}</entry>`).join("\n");
-    const manifestPart = {
-        text: `[SYSTEM CONTEXT]\nYou are provided with the following ${documents.length} source documents. Use ALL of them for your reflection.\n\n<document_manifest>\n${docManifest}\n</document_manifest>\n\n-----------------------------------`
-    };
-
-    // PLAN: Long Context Window (Pass files directly)
-    geminiDocs.forEach(d => {
-        fileContextParts.push({
-            fileData: {
-                fileUri: d.geminiUri,
-                mimeType: d.geminiMimeType || 'application/pdf'
-            }
-        });
-    });
-
-    // PLAN: Text Fallback (for non-uploaded docs OR fallback mode)
-    if (textDocs.length > 0) {
-        // XML TAGGING STRATEGY:
-        // Instead of loose text lines, we wrap text content in XML tags.
-        // This effectively simulates a "File" boundary for the model, preventing it from merging distinct sources.
-        const fallbackText = textDocs.map((d, i) => 
-`<document index="${i + 1}" title="${d.title}">
-${d.content || "(Empty Content)"}
-</document>`
-        ).join("\n\n");
-        
-        textContextParts.push(`[ADDITIONAL SOURCE CONTENT]\nThe following documents are provided as text:\n\n${fallbackText}`);
-    }
-
-    // Construct Content
-    const contents = previousHistory.map(h => ({
-        role: h.role,
-        parts: [{ text: h.text }]
-    }));
-    
-    const finalUserParts: any[] = [];
-    
-    // 1. MANIFEST (PRIMING)
-    finalUserParts.push(manifestPart);
-
-    // 2. FILE PARTS (URIs)
-    if (fileContextParts.length > 0) {
-        finalUserParts.push(...fileContextParts);
-        finalUserParts.push({ text: "\n[System: The above files are provided via reference URI.]" });
-    }
-
-    // 3. TEXT PARTS (Scraped/Extracted)
-    if (textContextParts.length > 0) {
-        finalUserParts.push({ text: textContextParts.join("\n") });
-    }
-    
-    // 4. ACTUAL USER MESSAGE
-    finalUserParts.push({ text: `\n[USER MESSAGE]\n${lastUserMsg}` });
-
-    contents.push({
-        role: 'user',
-        parts: finalUserParts
-    });
-
-    return await ai.models.generateContent({
-        model: 'gemini-2.5-flash', 
-        contents: contents,
-        config: {
-            systemInstruction: systemInstruction,
-            maxOutputTokens: 4096, 
-            temperature: 0.7,
-        }
-    });
-  };
-
-  try {
-      // ATTEMPT 1: Try using the File URIs (Optimized & Multimodal)
-      const response = await executeGeneration(false);
-      return response.text || "No response generated.";
-
-  } catch (error: any) {
-      const errMsg = (error.message || "").toLowerCase();
-      
-      // CHECK FOR EXPIRED FILES OR SERVER ERRORS (Hybrid Request Failure)
-      // We now explicitly check for 500 and "internal" to catch the mixed content crash
-      if (
-          errMsg.includes("not found") || 
-          errMsg.includes("permission denied") || 
-          errMsg.includes("404") || 
-          errMsg.includes("403") ||
-          errMsg.includes("invalid argument") ||
-          errMsg.includes("500") || // SERVER ERROR
-          errMsg.includes("internal") || // INTERNAL ERROR
-          errMsg.includes("overloaded")
-      ) {
-          console.warn(`⚠️ Gemini Error (${errMsg}). Falling back to pure text context from DB.`);
-          
-          // ATTEMPT 2: Fallback to Text Mode (Guaranteed Persistence)
-          try {
-              const fallbackResponse = await executeGeneration(true);
-              return fallbackResponse.text || "No response generated (Fallback).";
-          } catch (fallbackError) {
-              console.error("Gemini Fallback Generation Error:", fallbackError);
-              throw fallbackError; // If even text fails, we throw real error
-          }
+  // NO RETRY LOGIC - Direct Call
+  const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash', 
+      contents: contents,
+      config: {
+          systemInstruction: systemInstruction,
+          maxOutputTokens: 4096, 
+          temperature: 0.7,
       }
-
-      console.error("Gemini Generation Error:", error);
-      throw error;
-  }
+  });
+  
+  return response.text || "No response generated.";
 };
