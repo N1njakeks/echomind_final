@@ -5,15 +5,11 @@ import { SourceFile } from "../types";
 let aiClient: GoogleGenAI | null = null;
 let userProvidedKey: string | null = null;
 
-const STORE_DISPLAY_NAME = "Echomind Knowledge Base";
-let cachedStoreName: string | null = null;
-
 // Allow the app to set the key dynamically at runtime
 export const setGeminiApiKey = (key: string) => {
   if (key && key.startsWith("AIza")) {
     userProvidedKey = key;
     aiClient = null; // Force re-initialization
-    cachedStoreName = null; // Reset store cache
     // console.log("Gemini Service: User API Key updated.");
   } else {
     console.warn("Gemini Service: Invalid key format ignored.");
@@ -37,38 +33,7 @@ const getClient = () => {
   return aiClient;
 };
 
-// --- Helper: Get or Create File Search Store ---
-const getOrCreateFileSearchStore = async (): Promise<string | null> => {
-    const ai = getClient();
-    if (cachedStoreName) return cachedStoreName;
-
-    try {
-        const listResp = await ai.fileSearchStores.list();
-        for await (const store of listResp) {
-            if ((store as any).displayName === STORE_DISPLAY_NAME || (store as any).config?.displayName === STORE_DISPLAY_NAME) {
-                cachedStoreName = store.name;
-                return store.name;
-            }
-        }
-    } catch (e) {
-        // console.warn("Gemini: Could not list stores (permissions or network).", e);
-    }
-
-    try {
-        const newStore = await ai.fileSearchStores.create({
-            config: { displayName: STORE_DISPLAY_NAME }
-        });
-        cachedStoreName = newStore.name;
-        return newStore.name;
-    } catch (error) {
-        // CRITICAL FIX: If Store creation fails (e.g. 404 or Not Supported), return null.
-        // This triggers the "Long Context" fallback in generateAnswer.
-        console.warn("⚠️ Gemini File Search (RAG) is unavailable for this key/project. Falling back to Long Context Window.", error);
-        return null; 
-    }
-};
-
-// --- System Prompts (Unchanged) ---
+// --- System Prompts ---
 const STANDARD_PROMPT = `
 You are Echomind, a reflective companion that helps learners
 make sense of what they've been reading through thoughtful conversation.
@@ -304,34 +269,13 @@ export const uploadFileToGemini = async (file: File, mimeType: string, docId: st
       }
     });
     
-    // Robustly extract URI and Name
+    // Robustly extract URI
     const fileUri = uploadResult.uri || (uploadResult as any).file?.uri;
-    const fileName = uploadResult.name || (uploadResult as any).file?.name;
-
+    
     if (!fileUri) throw new Error("Gemini Upload failed to return a valid URI.");
 
-    // 2. Try to Import into Store
-    // We catch errors here specifically to allow the function to succeed with just the URI
-    // if the RAG Store is not available.
-    try {
-        const storeName = await getOrCreateFileSearchStore();
-        
-        if (storeName) {
-            // FIX: Use createFile to add the specific file resource to the store.
-            // This avoids the 'importFile' polling loop error ("Operation name is required")
-            // because adding a single pre-uploaded file to a store is typically synchronous/immediate.
-            await (ai.fileSearchStores as any).createFile({
-                fileSearchStoreName: storeName,
-                file: {
-                    name: fileName, // The resource name 'files/...'
-                    customMetadata: { doc_id: docId }
-                }
-            });
-        }
-    } catch (storeError) {
-        // Log but do NOT throw. We have the URI, which is enough for Long Context fallback.
-        console.warn("⚠️ RAG Indexing skipped (Store unavailable). File will be used via Context Window.", storeError);
-    }
+    // NOTE: We do not add to FileSearchStore here to avoid browser SDK 'createFile' errors.
+    // Instead, we rely on the 1M+ Token Context Window of Gemini 1.5/2.5.
     
     return fileUri;
 
@@ -373,43 +317,25 @@ INSTRUCTION:
   const lastUserMsg = history[history.length - 1].text;
   const previousHistory = history.slice(0, history.length - 1);
   
-  const tools: any[] = [];
   const textContextParts: string[] = [];
   const fileContextParts: any[] = [];
 
-  // Separate indexed (RAG) docs from fallback (Text) docs
-  // Docs with geminiUri can be used for RAG *OR* Long Context
+  // Separate uploaded docs from pure text docs
   const geminiDocs = documents.filter(d => d.geminiUri);
   const textDocs = documents.filter(d => !d.geminiUri);
 
-  // 1. Determine Strategy: RAG vs Long Context
-  // We try to get the store. If it exists, we use RAG. If null, we use Long Context.
-  const storeName = await getOrCreateFileSearchStore();
-  const useRAG = !!storeName && geminiDocs.length > 0;
-
-  if (useRAG) {
-      // PLAN A: RAG
-      const filter = geminiDocs.map(d => `doc_id = "${d.id}"`).join(" OR ");
-      tools.push({
-          fileSearch: {
-              fileSearchStoreNames: [storeName],
-              filter: filter 
+  // PLAN: Long Context Window (Pass files directly)
+  // We use this exclusively now for robustness.
+  geminiDocs.forEach(d => {
+      fileContextParts.push({
+          fileData: {
+              fileUri: d.geminiUri,
+              mimeType: d.geminiMimeType || 'application/pdf'
           }
       });
-  } else {
-      // PLAN B: Long Context Window (Pass files directly)
-      // This is the fallback if RAG Store is 404/Unavailable
-      geminiDocs.forEach(d => {
-          fileContextParts.push({
-              fileData: {
-                  fileUri: d.geminiUri,
-                  mimeType: d.geminiMimeType || 'application/pdf'
-              }
-          });
-      });
-  }
+  });
 
-  // PLAN C: Text Fallback (always added for non-uploaded docs)
+  // PLAN: Text Fallback (for non-uploaded docs)
   if (textDocs.length > 0) {
       const fallbackText = textDocs.map(d => `Document: ${d.title}\nContent: ${d.content || ""}`).join("\n\n");
       textContextParts.push(`ADDITIONAL CONTEXT (Text Files):\n${fallbackText}`);
@@ -423,8 +349,8 @@ INSTRUCTION:
   
   const finalUserParts: any[] = [];
   
-  // Add File Parts (Long Context) if RAG is off
-  if (!useRAG && fileContextParts.length > 0) {
+  // Add File Parts (Long Context)
+  if (fileContextParts.length > 0) {
       finalUserParts.push(...fileContextParts);
       finalUserParts.push({ text: "\n[System: The above files are provided as context for the user's reflection.]" });
   }
@@ -449,7 +375,7 @@ INSTRUCTION:
               systemInstruction: systemInstruction,
               maxOutputTokens: 4096, 
               temperature: 0.7,
-              tools: tools.length > 0 ? tools : undefined
+              // tools: undefined - Explicitly disabled RAG tools
           }
       });
       return response.text || "No response generated.";
