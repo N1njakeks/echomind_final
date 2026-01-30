@@ -305,7 +305,7 @@ CURRENT STATUS: YOU ARE STRICTLY AT TURN ${currentTurn} OF 10.
 INSTRUCTION:
 1. Look at the "INTERNAL STRUCTURE" for Turn ${currentTurn}. THAT is your goal.
 2. If the user's previous answer was negative (e.g., "nothing", "no idea", "not really"), DO NOT say "Got it" or "That's significant". Instead, acknowledge it gently (e.g., "That's fair") and modify the Turn ${currentTurn} question to fit (e.g., ask what was missing instead of what they learned).
-3. If the user is struggling, confused, or brief, DO NOT force deep insights. Instead, validate their difficulty (e.g., "It's okay if this feels unclear right now") before moving to the next step.`;
+3. If the user is struggling, confused, or brief, DO NOT force deep insights. Instead, validate their difficulty before moving to the next step.`;
       }
 
   } else {
