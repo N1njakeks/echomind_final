@@ -373,7 +373,7 @@ INSTRUCTION:
               systemInstruction: systemInstruction,
               maxOutputTokens: 4096, 
               temperature: 0.7,
-              // tools: [] -> REMOVED COMPLETELY to avoid "Invalid JSON payload... filter" error
+              // tools: undefined - Explicitly removed to prevent JSON filter errors
           }
       });
       return response.text || "No response generated.";

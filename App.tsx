@@ -357,12 +357,12 @@ export default function App() {
         geminiMimeType = 'text/plain'; // Simple text files
       }
 
-      // 2. Upload to Gemini File Search Store (RAG)
+      // 2. Upload to Gemini (Long Context Window)
       if ((type === 'pdf' || geminiMimeType === 'text/plain') && userApiKey) {
           try {
              geminiUri = await uploadFileToGemini(file, geminiMimeType!, docId);
           } catch (uploadError) {
-             console.warn("Failed to upload to Gemini File Search, falling back to text extraction only.", uploadError);
+             console.warn("Failed to upload to Gemini, falling back to text extraction only.", uploadError);
              // Proceed without geminiUri
           }
       }
